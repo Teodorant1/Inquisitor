@@ -119,7 +119,7 @@ func addWarningMicrotext(pdf *gofpdf.Fpdf, text string, y float64) {
 func addFooter(pdf *gofpdf.Fpdf, text string) {
 	pdf.SetFont("Helvetica", "", 8)
 	pdf.SetTextColor(77, 77, 77)
-	pdf.SetAlpha(55, "Normal")
+	pdf.SetAlpha(0.55, "Normal")
 	pdf.SetXY(10, 290)
 	pdf.CellFormat(0, 5, text, "", 0, "L", false, 0, "")
 	pdf.SetAlpha(1.0, "Normal")
