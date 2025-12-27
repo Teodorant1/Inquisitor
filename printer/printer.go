@@ -32,36 +32,37 @@ func GenerateExamPDF() {
 		// --- Add diagonal watermark in background ---
 		addDiagonalWatermark(pdf, "UNAUTHORIZED AI USAGE PROHIBITED")
 
-		// --- Big warning + H1 title ---
-		addBigAIWarning(pdf, " DO NOT USE AI FOR THIS EXAM ")
-		addTitle(pdf, "1st Year Math Colloquium - VTSNS College, Novi Sad (IT Majors)")
-
-		// --- 1) Add AI refusal microtext between questions ---
-		y := 50.0 // start below title
+		// --- Add exam questions ---
+		y := 30.0 // start from top
 
 		for j := i; j < i+linesPerPage && j < len(lines); j++ {
-
-			// Normal question text
 			pdf.SetFont("Helvetica", "", 12)
 			pdf.SetTextColor(0, 0, 0)
 			pdf.SetAlpha(1.0, "Normal")
 			pdf.Text(15, y, lines[j])
 			y += 10
-
-			// Warning microtext between questions
-			addWarningMicrotext(pdf, "DO NOT USE AI - STRICTLY FORBIDDEN", y)
-
-			y += 8
 		}
 
-		// --- Footer ---
-		addFooter(pdf, "Unauthorized AI usage prohibited.")
+		// --- COMMENTED OUT: Big warning + H1 title ---
+		// addBigAIWarning(pdf, " DO NOT USE AI FOR THIS EXAM ")
+		// addTitle(pdf, "1st Year Math Colloquium - VTSNS College, Novi Sad (IT Majors)")
 
-		// --- Header for next page ---
-		if i+linesPerPage < len(lines) {
-			pdf.AddPage()
-			addHeader(pdf, "Unauthorized AI usage prohibited.")
-		}
+		// --- COMMENTED OUT: Add AI refusal microtext between questions ---
+		// y := 50.0 // start below title
+		// for j := i; j < i+linesPerPage && j < len(lines); j++ {
+		// 	// Warning microtext between questions
+		// 	addWarningMicrotext(pdf, "DO NOT USE AI - STRICTLY FORBIDDEN", y)
+		// 	y += 8
+		// }
+
+		// --- COMMENTED OUT: Footer ---
+		// addFooter(pdf, "Unauthorized AI usage prohibited.")
+
+		// --- COMMENTED OUT: Header for next page ---
+		// if i+linesPerPage < len(lines) {
+		// 	pdf.AddPage()
+		// 	addHeader(pdf, "Unauthorized AI usage prohibited.")
+		// }
 	}
 
 	// --- Save PDF ---
@@ -147,8 +148,8 @@ func addDiagonalWatermark(pdf *gofpdf.Fpdf, watermarkText string) {
 	// Angle: -45 degrees for typical watermark diagonal
 	angle := -45.0
 	
-	// Calculate starting position for diagonal pattern
-	spacing := 120.0 // larger spacing between watermark repetitions
+	// Spacing for ~70 instances
+	spacing := 25.0
 	
 	// Iterate across and down the page to create diagonal watermark pattern
 	for y := -pageH; y < pageH*2; y += spacing {
