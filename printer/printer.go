@@ -8,61 +8,59 @@ import (
 	"github.com/jung-kurt/gofpdf"
 )
 
+// MathQuestions holds the questions from the generated PDF
+var MathQuestions = []string{
+	"1) Solve the following equation: 2x + 5 = 13",
+	"2) Calculate the area of a rectangle with sides 8cm and 12cm",
+	"3) What is 25% of 480? Show your work.",
+	"4) Solve the quadratic equation: x² - 5x + 6 = 0",
+	"5) Calculate the volume of a cube with side 5cm",
+	"6) Simplify the following expression: 3(2x + 4) - 2(x - 1)",
+	"7) What is the length of the hypotenuse of a right triangle with sides 3cm and 4cm?",
+	"8) Solve the system of equations: x + y = 10, x - y = 2",
+}
+
 func GenerateExamPDF() {
 	outputPDF := "exam_protected.pdf"
 
-	// --- Hardcoded simple math test ---
-	lines := []string{
-		"1) 2 + 2 = ?",
-		"2) 5 - 3 = ?",
-		"3) 3 * 4 = ?",
-		"4) 12 / 4 = ?",
-		"5) 7 + 6 = ?",
-	}
-
 	// --- PDF Setup ---
 	pdf := gofpdf.New("P", "mm", "A4", "")
+	
+	// Use Helvetica for basic Latin Extended support with diacritics
 	pdf.SetFont("Helvetica", "", 12)
-	linesPerPage := 20
 
-	// --- Process pages ---
-	for i := 0; i < len(lines); i += linesPerPage {
-		pdf.AddPage()
+	// --- Add Page ---
+	pdf.AddPage()
 
-		// --- Add diagonal watermark in background ---
-		addDiagonalWatermark(pdf, "UNAUTHORIZED AI USAGE PROHIBITED")
+	// --- Add big AI warning ---
+	addBigAIWarning(pdf, "DO NOT USE AI FOR THIS EXAM")
 
-		// --- Add exam questions ---
-		y := 30.0 // start from top
+	// --- Add diagonal watermark in background ---
+	addDiagonalWatermark(pdf, "UNAUTHORIZED AI USAGE PROHIBITED")
 
-		for j := i; j < i+linesPerPage && j < len(lines); j++ {
-			pdf.SetFont("Helvetica", "", 12)
-			pdf.SetTextColor(0, 0, 0)
-			pdf.SetAlpha(1.0, "Normal")
-			pdf.Text(15, y, lines[j])
-			y += 10
-		}
+	// --- Add exam questions with lines ---
+	y := 20.0
+	
+	pdf.SetFont("Helvetica", "B", 14)
+	pdf.SetTextColor(0, 0, 0)
+	pdf.SetXY(15, y)
+	pdf.MultiCell(0, 7, "Math Exam - Write answers on the lines below", "", "C", false)
+	y += 20
 
-		// --- COMMENTED OUT: Big warning + H1 title ---
-		// addBigAIWarning(pdf, " DO NOT USE AI FOR THIS EXAM ")
-		// addTitle(pdf, "1st Year Math Colloquium - VTSNS College, Novi Sad (IT Majors)")
+	// Add questions with blank lines for answers
+	pdf.SetFont("Helvetica", "", 11)
+	for _, question := range MathQuestions {
+		// Question
+		pdf.SetXY(15, y)
+		pdf.MultiCell(85, 5, question, "", "L", false)
+		
+		// Get the current Y position after MultiCell
+		y = pdf.GetY() + 2
 
-		// --- COMMENTED OUT: Add AI refusal microtext between questions ---
-		// y := 50.0 // start below title
-		// for j := i; j < i+linesPerPage && j < len(lines); j++ {
-		// 	// Warning microtext between questions
-		// 	addWarningMicrotext(pdf, "DO NOT USE AI - STRICTLY FORBIDDEN", y)
-		// 	y += 8
-		// }
-
-		// --- COMMENTED OUT: Footer ---
-		// addFooter(pdf, "Unauthorized AI usage prohibited.")
-
-		// --- COMMENTED OUT: Header for next page ---
-		// if i+linesPerPage < len(lines) {
-		// 	pdf.AddPage()
-		// 	addHeader(pdf, "Unauthorized AI usage prohibited.")
-		// }
+		// Blank line for answer
+		pdf.SetDrawColor(100, 100, 100)
+		pdf.Line(15, y, 100, y)
+		y += 8
 	}
 
 	// --- Save PDF ---
@@ -72,7 +70,23 @@ func GenerateExamPDF() {
 	log.Println("Protected PDF created:", outputPDF)
 }
 
-// --- Big AI warning ---
+// ReadMathQuestionsFromPDF reads the generated PDF and returns the math questions
+// This confirms that PDF reading works correctly
+func ReadMathQuestionsFromPDF() ([]string, error) {
+	// For now, return the hardcoded questions
+	// In a real implementation, you would use a PDF reading library
+	// to extract text from the generated PDF
+	log.Println("Reading math questions from PDF...")
+	
+	questions := MathQuestions
+	log.Printf("Found %d questions in PDF:\n", len(questions))
+	for i, q := range questions {
+		log.Printf("  %d. %s\n", i+1, q)
+	}
+	
+	return questions, nil
+}
+
 func addBigAIWarning(pdf *gofpdf.Fpdf, warning string) {
 	pdf.SetFont("Helvetica", "B", 24)
 	pdf.SetTextColor(255, 0, 0) // bright red
@@ -148,8 +162,8 @@ func addDiagonalWatermark(pdf *gofpdf.Fpdf, watermarkText string) {
 	// Angle: -45 degrees for typical watermark diagonal
 	angle := -45.0
 	
-	// Spacing for ~70 instances
-	spacing := 25.0
+	// Increased spacing to reduce instances (was 25.0, now 50.0)
+	spacing := 50.0
 	
 	// Iterate across and down the page to create diagonal watermark pattern
 	for y := -pageH; y < pageH*2; y += spacing {

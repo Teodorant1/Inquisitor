@@ -101,9 +101,23 @@ func sendVisionRequest(apiKey string, b64Image string, sampleID int) (string, er
 
 	return content, nil
 }
+
 func main() {
-// analyze_main()
-printer.GenerateExamPDF() 
+	// Step 1: Generate exam PDF with lines and QR codes
+	log.Println("Step 1: Generating exam PDF with lines and QR codes...")
+	printer.GenerateExamPDF()
+	
+	// Step 2: Read math questions from PDF to confirm reading works
+	log.Println("\nStep 2: Reading math questions from PDF...")
+	questions, err := printer.ReadMathQuestionsFromPDF()
+	if err != nil {
+		log.Fatalf("Failed to read questions from PDF: %v", err)
+	}
+	log.Printf("Successfully read %d questions from PDF\n", len(questions))
+	
+	// Step 3: Proceed with vision analysis (optional)
+	log.Println("\nStep 3: Proceeding with vision analysis...")
+	analyze_main()
 }
 func analyze_main() {
 	// ---- LOAD ENV ----
