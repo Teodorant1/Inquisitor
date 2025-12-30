@@ -1,11 +1,14 @@
 package printer
 
 import (
+	"bytes"
+	"fmt"
 	"log"
 	"math/rand"
 	"strings"
 
 	"github.com/jung-kurt/gofpdf"
+	"github.com/ledongthuc/pdf"
 )
 
 // MathQuestions holds the questions from the generated PDF
@@ -16,8 +19,8 @@ var MathQuestions = []string{
 	"4) Solve the quadratic equation: x² - 5x + 6 = 0",
 	"5) Calculate the volume of a cube with side 5cm",
 	"6) Simplify the following expression: 3(2x + 4) - 2(x - 1)",
-	"7) What is the length of the hypotenuse of a right triangle with sides 3cm and 4cm?",
-	"8) Solve the system of equations: x + y = 10, x - y = 2",
+	"7) Rešite kvadratnu jednačinu: x² - 7x + 12 = 0",
+	"8) Решите систем једначина: 2x + y = 8, x - y = 1",
 }
 
 func GenerateExamPDF() {
@@ -25,13 +28,17 @@ func GenerateExamPDF() {
 
 	// --- PDF Setup ---
 	pdf := gofpdf.New("P", "mm", "A4", "")
-	
-	// Use Helvetica for basic Latin Extended support with diacritics
-	pdf.SetFont("Helvetica", "", 12)
+	// pdf.SetFont("Helvetica", "", 12)
 
 	// --- Add Page ---
 	pdf.AddPage()
+	
+	// 1. Register the NotoSans font
+    // Parameters: Family Name, Style ("" for regular), Path to .ttf file
+    pdf.AddUTF8Font("NotoSans", "", "NotoSans-Regular.ttf")
 
+    // 2. Set it as the current font
+    pdf.SetFont("NotoSans", "", 10)
 	// --- Add big AI warning ---
 	addBigAIWarning(pdf, "DO NOT USE AI FOR THIS EXAM")
 
@@ -41,14 +48,14 @@ func GenerateExamPDF() {
 	// --- Add exam questions with lines ---
 	y := 20.0
 	
-	pdf.SetFont("Helvetica", "B", 14)
+	// pdf.SetFont("Helvetica", "B", 14)
 	pdf.SetTextColor(0, 0, 0)
 	pdf.SetXY(15, y)
 	pdf.MultiCell(0, 7, "Math Exam - Write answers on the lines below", "", "C", false)
 	y += 20
 
 	// Add questions with blank lines for answers
-	pdf.SetFont("Helvetica", "", 11)
+	// pdf.SetFont("Helvetica", "", 11)
 	for _, question := range MathQuestions {
 		// Question
 		pdf.SetXY(15, y)
@@ -88,7 +95,7 @@ func ReadMathQuestionsFromPDF() ([]string, error) {
 }
 
 func addBigAIWarning(pdf *gofpdf.Fpdf, warning string) {
-	pdf.SetFont("Helvetica", "B", 24)
+	// pdf.SetFont("Helvetica", "B", 24)
 	pdf.SetTextColor(255, 0, 0) // bright red
 	pdf.SetAlpha(1.0, "Normal")
 	pdf.SetXY(15, 10)
@@ -97,7 +104,7 @@ func addBigAIWarning(pdf *gofpdf.Fpdf, warning string) {
 
 // --- Helper: H1 Title ---
 func addTitle(pdf *gofpdf.Fpdf, title string) {
-	pdf.SetFont("Helvetica", "B", 18)
+	// pdf.SetFont("Helvetica", "B", 18)
 	pdf.SetTextColor(0, 0, 0)
 	pdf.SetAlpha(1.0, "Normal")
 	pdf.SetXY(15, 40)
@@ -108,7 +115,7 @@ func addTitle(pdf *gofpdf.Fpdf, title string) {
 
 func addWarningMicrotext(pdf *gofpdf.Fpdf, text string, y float64) {
 	// Use default Helvetica font for microtext
-	pdf.SetFont("Helvetica", "", 6)
+	// pdf.SetFont("Helvetica", "", 6)
 	pdf.SetTextColor(100, 100, 100)
 	pdf.SetAlpha(0.55, "Normal")
 
@@ -132,7 +139,7 @@ func addWarningMicrotext(pdf *gofpdf.Fpdf, text string, y float64) {
 
 // --- Footer ---
 func addFooter(pdf *gofpdf.Fpdf, text string) {
-	pdf.SetFont("Helvetica", "", 8)
+	// pdf.SetFont("Helvetica", "", 8)
 	pdf.SetTextColor(77, 77, 77)
 	pdf.SetAlpha(0.55, "Normal")
 	pdf.SetXY(10, 290)
@@ -142,7 +149,7 @@ func addFooter(pdf *gofpdf.Fpdf, text string) {
 
 // --- Header ---
 func addHeader(pdf *gofpdf.Fpdf, text string) {
-	pdf.SetFont("Helvetica", "", 8)
+	// pdf.SetFont("Helvetica", "", 8)
 	pdf.SetTextColor(77, 77, 77)
 	pdf.SetAlpha(0.55, "Normal")
 	pdf.SetXY(10, 10)
@@ -154,7 +161,7 @@ func addHeader(pdf *gofpdf.Fpdf, text string) {
 func addDiagonalWatermark(pdf *gofpdf.Fpdf, watermarkText string) {
 	pageW, pageH := pdf.GetPageSize()
 	
-	pdf.SetFont("Helvetica", "B", 6)
+	// pdf.SetFont("Helvetica", "B", 6)
 	pdf.SetTextColor(220, 220, 220)
 	pdf.SetAlpha(0.58, "Normal")
 	
@@ -181,3 +188,110 @@ func addDiagonalWatermark(pdf *gofpdf.Fpdf, watermarkText string) {
 	pdf.SetAlpha(1.0, "Normal")
 }
 
+
+var RawQuestions = []string{
+	"1) Solve the following equation: 2x + 5 = 13",
+	"2) Calculate the area of a rectangle with sides 8cm and 12cm",
+	"3) What is 25% of 480? Show your work.",
+	"4) Solve the quadratic equation: x² - 5x + 6 = 0",
+	"5) Calculate the volume of a cube with side 5cm",
+	"6) Simplify the following expression: 3(2x + 4) - 2(x - 1)",
+	"7) Rešite kvadratnu jednačinu: x² - 7x + 12 = 0",
+	"8) Решите систем једначина: 2x + y = 8, x - y = 1",
+}
+
+// ExecuteWorkflow runs the full sequence: Create -> Read -> Create Protected
+func ExecuteWorkflow() {
+	tempFile := "temp_questions.pdf"
+	finalFile := "exam_protected.pdf"
+
+	// Step 1: Create the initial PDF
+	fmt.Println("Step 1: Generating temporary PDF...")
+	createSimplePDF(tempFile, RawQuestions)
+
+	// Step 2: Read from that PDF
+	fmt.Println("Step 2: Reading questions back from PDF...")
+	extractedQuestions, err := readTextFromPDF(tempFile)
+	if err != nil {
+		log.Fatalf("Failed to read PDF: %v", err)
+	}
+
+	// Step 3: Generate the protected PDF using the extracted text
+	fmt.Println("Step 3: Generating protected PDF with extracted content...")
+	GenerateProtectedPDF(finalFile, extractedQuestions)
+}
+
+// createSimplePDF creates a basic PDF without any protection/watermarks
+func createSimplePDF(filename string, questions []string) {
+	pdf := gofpdf.New("P", "mm", "A4", "")
+	pdf.AddPage()
+	pdf.AddUTF8Font("NotoSans", "", "NotoSans-Regular.ttf")
+	pdf.SetFont("NotoSans", "", 12)
+
+	for _, q := range questions {
+		pdf.MultiCell(0, 10, q, "", "L", false)
+	}
+
+	err := pdf.OutputFileAndClose(filename)
+	if err != nil {
+		log.Fatal("Error creating simple PDF:", err)
+	}
+}
+
+// readTextFromPDF extracts text from the PDF file
+func readTextFromPDF(filename string) ([]string, error) {
+	f, r, err := pdf.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var buf bytes.Buffer
+	b, err := r.GetPlainText()
+	if err != nil {
+		return nil, err
+	}
+	buf.ReadFrom(b)
+
+	// Split by newlines and clean up empty strings
+	lines := strings.Split(buf.String(), "\n")
+	var cleaned []string
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			cleaned = append(cleaned, strings.TrimSpace(line))
+		}
+	}
+	return cleaned, nil
+}
+
+// GenerateProtectedPDF is your original logic, now accepting the extracted questions
+func GenerateProtectedPDF(outputPDF string, questions []string) {
+	pdf := gofpdf.New("P", "mm", "A4", "")
+	pdf.AddPage()
+	pdf.AddUTF8Font("NotoSans", "", "NotoSans-Regular.ttf")
+	pdf.SetFont("NotoSans", "", 10)
+
+	// Background protection
+	addDiagonalWatermark(pdf, "UNAUTHORIZED AI USAGE PROHIBITED")
+	addBigAIWarning(pdf, "DO NOT USE AI FOR THIS EXAM")
+
+	y := 30.0
+	pdf.SetTextColor(0, 0, 0)
+	
+	for _, question := range questions {
+		pdf.SetXY(15, y)
+		pdf.MultiCell(180, 5, question, "", "L", false)
+		
+		y = pdf.GetY() + 2
+		pdf.SetDrawColor(100, 100, 100)
+		pdf.Line(15, y, 100, y)
+		y += 10
+	}
+
+	if err := pdf.OutputFileAndClose(outputPDF); err != nil {
+		log.Fatal(err)
+	}
+	log.Println("Protected PDF created successfully.")
+}
+
+/* ... keep your helper functions: addBigAIWarning, addDiagonalWatermark, etc. ... */
