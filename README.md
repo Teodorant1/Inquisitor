@@ -1,5 +1,5 @@
 **Golang based testing framework for creating secure PDFs that prompt inject Chatgpt to stop it from helping exam cheaters**
-
+(Important Note: right now some of the values are hardcoded in the code, since this is in the proof of concept stage that will be expanded in the future)
 -It has 2 main functions:
 1. sending N number of simultaneous requests of an image prompt to ChatGPT to check the response, namely if it will reject it.
 2. Scanning a PDF with exam questions to extract them and create a new PDF with diagonally overlaid text, specifically designed to trigger AI academic integrity alarms which will force them to refuse to answer. (testing of this PDF isn't currently automated, for now I take screenshots of the PDF or print it out and take pictures of it and then add those pictures to the root folder)
