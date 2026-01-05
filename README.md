@@ -10,7 +10,7 @@
 2. Install the Go extension for VS code https://marketplace.visualstudio.com/items?itemName=golang.go
 3. Go to https://platform.openai.com/ and acquire an API key for ChatGPT , and also set the spending limits to 10 and 5 dollars, the very minimum, so you don't bankrupt yourself by accident.
 4. Create a .env in the root and add the API key with the name OPENAI_API_KEY in it
-5. Type "GO RUN ." to make the program run
+5. Type "GO RUN ." in terminal to make the program run and read the results in terminal.
 
 
 ![unnamed](https://github.com/user-attachments/assets/cbeabfba-18f3-40b5-af12-a11cd1f4fd8d)
