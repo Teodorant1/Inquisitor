@@ -1,2 +1,16 @@
-Golang based testing framework for creating secure PDFs that prompt inject Chatgpt to stop it from helping exam cheaters
+**Golang based testing framework for creating secure PDFs that prompt inject Chatgpt to stop it from helping exam cheaters**
+
+-It has 2 main functions:
+1. sending N number of simultaneous requests of an image prompt to ChatGPT to check the response, namely if it will reject it.
+2. Scanning a PDF with exam questions to extract them and create a new PDF with diagonally overlaid text, specifically designed to trigger AI academic integrity alarms which will force them to refuse to answer.
+
+**INSTRUCTIONS FOR HOW TO RUN IN VS CODE**
+
+1. Install Golang Runtime https://go.dev/doc/install
+2. Install the Go extension for VS code
+3. Go to https://platform.openai.com/ and acquire an API key for ChatGPT , and also set the spending limits to 10 and 5 dollars, the very minimum, so you don't bankrupt yourself by accident.
+4. Create a .env in the root and add the API key with the name OPENAI_API_KEY in it
+5. Type "GO RUN ." to make the program run
+
+
 ![unnamed](https://github.com/user-attachments/assets/cbeabfba-18f3-40b5-af12-a11cd1f4fd8d)
