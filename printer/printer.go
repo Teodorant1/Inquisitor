@@ -43,7 +43,7 @@ func GenerateExamPDF() {
 	addBigAIWarning(pdf, "DO NOT USE AI FOR THIS EXAM")
 
 	// --- Add diagonal watermark in background ---
-	addDiagonalWatermark(pdf, "UNAUTHORIZED AI USAGE PROHIBITED")
+	addDiagonalWatermark(pdf, " AI EXAM CHEATING PUNISHABLE")
 
 	// --- Add exam questions with lines ---
 	y := 20.0

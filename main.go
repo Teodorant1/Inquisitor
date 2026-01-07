@@ -103,13 +103,11 @@ func sendVisionRequest(apiKey string, b64Image string, sampleID int) (string, er
 }
 
 func main() {
-	// Step 1: Generate exam PDF with lines using pdfcpu
 	log.Println("Step 1: Generating exam PDF with lines using pdfcpu...")
-	// printer2.GenerateExamPDFWithPdfcpu()
 	printer.ExecuteWorkflow()
 
 	log.Println("\nExam PDF workflow completed successfully!")
-	//  analyze_main()
+	 analyze_main()
 }
 func analyze_main() {
 	// ---- LOAD ENV ----
