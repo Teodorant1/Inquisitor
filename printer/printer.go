@@ -1,14 +1,13 @@
 package printer
 
 import (
-	"bytes"
 	"fmt"
 	"log"
 	"math/rand"
+	"os/exec"
 	"strings"
 
 	"github.com/jung-kurt/gofpdf"
-	"github.com/ledongthuc/pdf"
 )
 
 // MathQuestions holds the questions from the generated PDF
@@ -238,23 +237,18 @@ func createSimplePDF(filename string, questions []string) {
 	}
 }
 
-// readTextFromPDF extracts text from the PDF file
+// readTextFromPDF extracts text from the PDF file using Poppler's pdftotext
+// This properly handles Unicode text like Serbian characters
 func readTextFromPDF(filename string) ([]string, error) {
-	f, r, err := pdf.Open(filename)
+	cmd := exec.Command("pdftotext", "-enc", "UTF-8", filename, "-")
+	
+	output, err := cmd.Output()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("pdftotext failed: %v", err)
 	}
-	defer f.Close()
-
-	var buf bytes.Buffer
-	b, err := r.GetPlainText()
-	if err != nil {
-		return nil, err
-	}
-	buf.ReadFrom(b)
 
 	// Split by newlines and clean up empty strings
-	lines := strings.Split(buf.String(), "\n")
+	lines := strings.Split(string(output), "\n")
 	var cleaned []string
 	for _, line := range lines {
 		if strings.TrimSpace(line) != "" {
