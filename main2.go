@@ -2,8 +2,8 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -12,20 +12,17 @@ import (
 	"os"
 	"sync"
 
-	"Inquisitor/api"
-	"Inquisitor/config"
-	"Inquisitor/db"
 	"Inquisitor/printer"
 
 	"github.com/joho/godotenv"
 )
 
-type SampleResult struct {
+type SampleResult2 struct {
 	SampleID int    `json:"sample_id"`
 	Response string `json:"response"`
 }
 
-func sendVisionRequest(apiKey string, b64Image string, sampleID int) (string, error) {
+func sendVisionRequest2(apiKey string, b64Image string, sampleID int) (string, error) {
 	payload := map[string]interface{}{
 		// MODEL SELECTION:
 		// Use "gpt-4o" for GPT-4 Omni (current recommended)
@@ -106,8 +103,8 @@ func sendVisionRequest(apiKey string, b64Image string, sampleID int) (string, er
 	return content, nil
 }
 
-// uploadPDFFile uploads a PDF to OpenAI and returns the file_id
-func uploadPDFFile(apiKey string, filePath string) (string, error) {
+// uploadPDFFile2 uploads a PDF to OpenAI and returns the file_id
+func uploadPDFFile2(apiKey string, filePath string) (string, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return "", err
@@ -174,7 +171,7 @@ func uploadPDFFile(apiKey string, filePath string) (string, error) {
 	return fileID, nil
 }
 
-func sendPDFRequest(apiKey string, fileID string, sampleID int) (string, error) {
+func sendPDFRequest2(apiKey string, fileID string, sampleID int) (string, error) {
 	payload := map[string]interface{}{
 		"model": "gpt-5.1",
 		"messages": []map[string]interface{}{
@@ -240,50 +237,15 @@ func sendPDFRequest(apiKey string, fileID string, sampleID int) (string, error) 
 	return content, nil
 }
 
-func main() {
-	// Load environment variables
-	godotenv.Load()
+func main2() {
+	log.Println("Step 1: Generating exam PDF with gpdf library...")
+	printer.ExecuteWorkflow2()
 
-	// Parse flags
-	cliMode := flag.Bool("cli", false, "Run in CLI mode instead of API server")
-	flag.Parse()
-
-	// Load configuration
-	cfg := config.Load()
-
-	// Initialize database
-	err := db.Initialize(cfg.DatabaseURL)
-	if err != nil {
-		log.Fatalf("Failed to initialize database: %v", err)
-	}
-	defer db.Close()
-
-	// Check for CLI mode
-	if *cliMode || cfg.CLIMode {
-		log.Println("Running in CLI mode...")
-		log.Println("Step 1: Generating exam PDF...")
-		printer.ExecuteWorkflow()
-		log.Println("\nExam PDF workflow completed successfully!")
-		return
-	}
-
-	// Otherwise, start API server
-	log.Println("Initializing API server...")
-	server := api.NewServer(cfg)
-	server.RegisterRoutes()
-
-	// Initialize job worker (2 concurrent worker goroutines)
-	server.InitializeWorker(2)
-
-	// Initialize cleanup routine (automatic temp file cleanup)
-	server.InitializeCleanup()
-
-	log.Printf("Starting Inquisitor API server on http://%s:%d\n", cfg.APIHost, cfg.APIPort)
-	if err := server.Start(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("Server error: %v", err)
-	}
+	log.Println("\nExam PDF workflow completed successfully (gpdf version)!")
+	analyze_main2()
 }
-func analyze_main() {
+
+func analyze_main2() {
 	// ---- LOAD ENV ----
 	godotenv.Load()
 
@@ -295,50 +257,50 @@ func analyze_main() {
 		log.Fatal("Missing OPENAI_API_KEY")
 	}
 
-	// // ---- READ IMAGE FILE AND ENCODE ----
-	// imagePath := "test-image.png"
-	// imageBytes, err := os.ReadFile(imagePath)
-	// if err != nil {
-	// 	log.Fatalf("Failed to read image: %v", err)
-	// }
+	// ---- READ IMAGE FILE AND ENCODE ----
+	imagePath := "test-image.png"
+	imageBytes, err := os.ReadFile(imagePath)
+	if err != nil {
+		log.Fatalf("Failed to read image: %v", err)
+	}
 
-	// b64Image := base64.StdEncoding.EncodeToString(imageBytes)
+	b64Image := base64.StdEncoding.EncodeToString(imageBytes)
 
 	// ---- UPLOAD PDF FILE ----
 	pdfPath := "exam_protected.pdf"
 	log.Println("Uploading PDF file to OpenAI...")
-	fileID, err := uploadPDFFile(apiKey, pdfPath)
+	fileID, err := uploadPDFFile2(apiKey, pdfPath)
 	if err != nil {
 		log.Fatalf("Failed to upload PDF: %v", err)
 	}
 	log.Printf("PDF uploaded successfully. File ID: %s\n", fileID)
 
 	// ---- PARALLEL REQUESTS WITH GOROUTINES ----
-	results := make([]SampleResult, sampleSize)
-	pdfResults := make([]SampleResult, sampleSize)
+	results := make([]SampleResult2, sampleSize)
+	pdfResults := make([]SampleResult2, sampleSize)
 	var wg sync.WaitGroup
-	imageChan := make(chan SampleResult, sampleSize)
-	pdfChan := make(chan SampleResult, sampleSize)
+	imageChan := make(chan SampleResult2, sampleSize)
+	pdfChan := make(chan SampleResult2, sampleSize)
 
-	// for i := range sampleSize {
-	// 	wg.Add(1)
-	// 	go func(index int) {
-	// 		defer wg.Done()
+	for i := range sampleSize {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
 
-	// 		fmt.Printf("Running image sample %d...\n", index+1)
+			fmt.Printf("Running image sample %d...\n", index+1)
 
-	// 		answer, err := sendVisionRequest(apiKey, b64Image, index+1)
-	// 		if err != nil {
-	// 			log.Printf("Image API error for sample %d: %v", index+1, err)
-	// 			answer = fmt.Sprintf("Error: %v", err)
-	// 		}
+			answer, err := sendVisionRequest2(apiKey, b64Image, index+1)
+			if err != nil {
+				log.Printf("Image API error for sample %d: %v", index+1, err)
+				answer = fmt.Sprintf("Error: %v", err)
+			}
 
-	// 		imageChan <- SampleResult{
-	// 			SampleID: index + 1,
-	// 			Response: answer,
-	// 		}
-	// 	}(i)
-	// }
+			imageChan <- SampleResult2{
+				SampleID: index + 1,
+				Response: answer,
+			}
+		}(i)
+	}
 
 	// ---- PARALLEL PDF REQUESTS WITH GOROUTINES ----
 	for i := range sampleSize {
@@ -348,18 +310,26 @@ func analyze_main() {
 
 			fmt.Printf("Running PDF sample %d...\n", index+1)
 
-			answer, err := sendPDFRequest(apiKey, fileID, index+1)
+			answer, err := sendPDFRequest2(apiKey, fileID, index+1)
 			if err != nil {
 				log.Printf("PDF API error for sample %d: %v", index+1, err)
 				answer = fmt.Sprintf("Error: %v", err)
 			}
 
-			pdfChan <- SampleResult{
+			pdfChan <- SampleResult2{
 				SampleID: index + 1,
 				Response: answer,
 			}
 		}(i)
 	}
+
+	// ---- WAIT FOR IMAGE RESULTS ----
+	go func() {
+		for i := 0; i < sampleSize; i++ {
+			result := <-imageChan
+			results[result.SampleID-1] = result
+		}
+	}()
 
 	// ---- WAIT FOR PDF RESULTS ----
 	go func() {
