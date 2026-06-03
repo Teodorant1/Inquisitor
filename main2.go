@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"time"
 
 	"Inquisitor/printer"
 
@@ -73,7 +74,9 @@ func sendVisionRequest2(apiKey string, b64Image string, sampleID int) (string, e
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", apiKey))
 
-	client := &http.Client{}
+	client := &http.Client{
+		Timeout: 60 * time.Second,
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
@@ -95,10 +98,22 @@ func sendVisionRequest2(apiKey string, b64Image string, sampleID int) (string, e
 		return "", err
 	}
 
-	choices := result["choices"].([]interface{})
-	firstChoice := choices[0].(map[string]interface{})
-	message := firstChoice["message"].(map[string]interface{})
-	content := message["content"].(string)
+	choices, ok := result["choices"].([]interface{})
+	if !ok || len(choices) == 0 {
+		return "", fmt.Errorf("invalid response: no choices found")
+	}
+	firstChoice, ok := choices[0].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("invalid response: choice not a map")
+	}
+	message, ok := firstChoice["message"].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("invalid response: message not a map")
+	}
+	content, ok := message["content"].(string)
+	if !ok {
+		return "", fmt.Errorf("invalid response: content not a string")
+	}
 
 	return content, nil
 }
@@ -141,7 +156,9 @@ func uploadPDFFile2(apiKey string, filePath string) (string, error) {
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", apiKey))
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
-	client := &http.Client{}
+	client := &http.Client{
+		Timeout: 60 * time.Second,
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
@@ -207,7 +224,9 @@ func sendPDFRequest2(apiKey string, fileID string, sampleID int) (string, error)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", apiKey))
 
-	client := &http.Client{}
+	client := &http.Client{
+		Timeout: 60 * time.Second,
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
@@ -238,10 +257,10 @@ func sendPDFRequest2(apiKey string, fileID string, sampleID int) (string, error)
 }
 
 func main2() {
-	log.Println("Step 1: Generating exam PDF with gpdf library...")
-	printer.ExecuteWorkflow2()
+	log.Println("Step 1: Generating exam PDF...")
+	printer.ExecuteWorkflow()
 
-	log.Println("\nExam PDF workflow completed successfully (gpdf version)!")
+	log.Println("\nExam PDF workflow completed successfully!")
 	analyze_main2()
 }
 

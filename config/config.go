@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"time"
@@ -51,6 +52,20 @@ func Load() *Config {
 		CleanupInterval: getEnvDuration("CLEANUP_INTERVAL", 1*time.Hour),
 		MaxFileAge:      getEnvDuration("MAX_FILE_AGE", 24*time.Hour),
 	}
+}
+
+// Validate checks that all required configuration is present
+func (c *Config) Validate() error {
+	if c.OpenAIKey == "" && !c.CLIMode {
+		return fmt.Errorf("OPENAI_API_KEY environment variable is required for API mode")
+	}
+	if c.DatabaseURL == "" {
+		return fmt.Errorf("DATABASE_URL environment variable is required")
+	}
+	if c.TempDir == "" {
+		return fmt.Errorf("TEMP_DIR is required")
+	}
+	return nil
 }
 
 // Helper functions

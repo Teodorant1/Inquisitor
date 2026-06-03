@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"gorm.io/driver/postgres"
@@ -13,7 +14,10 @@ import (
 	"gorm.io/gorm"
 )
 
-var DB *gorm.DB
+var (
+	DB   *gorm.DB
+	dbMu sync.RWMutex
+)
 
 // Initialize sets up the database connection and runs migrations
 func Initialize(databaseURL string) error {
@@ -51,13 +55,24 @@ func Initialize(databaseURL string) error {
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 
+	// Lock before assigning global DB
+	dbMu.Lock()
 	DB = db
+	dbMu.Unlock()
+
 	log.Printf("Database initialized successfully: %s", databaseURL)
 	return nil
 }
 
 // Close closes the database connection
 func Close() error {
+	dbMu.RLock()
+	defer dbMu.RUnlock()
+	
+	if DB == nil {
+		return nil
+	}
+	
 	sqlDB, err := DB.DB()
 	if err != nil {
 		return err

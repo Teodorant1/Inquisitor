@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"Inquisitor/config"
 )
@@ -14,6 +16,7 @@ type Server struct {
 	config  *config.Config
 	worker  *JobWorker
 	cleanup *Cleanup
+	httpSrv *http.Server
 }
 
 // NewServer creates a new API server
@@ -54,11 +57,31 @@ func (s *Server) InitializeWorker(numWorkers int) {
 	s.worker.Start()
 }
 
-// Start starts the HTTP server
+// Start starts the HTTP server and blocks until shutdown
 func (s *Server) Start() error {
 	addr := fmt.Sprintf("%s:%d", s.config.APIHost, s.config.APIPort)
+	s.httpSrv = &http.Server{
+		Addr:         addr,
+		Handler:      s.mux,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
 	log.Printf("Starting API server on http://%s", addr)
-	return http.ListenAndServe(addr, s.mux)
+	return s.httpSrv.ListenAndServe()
+}
+
+// Shutdown gracefully shuts down the server with a timeout
+func (s *Server) Shutdown() error {
+	if s.httpSrv == nil {
+		return nil
+	}
+	
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	
+	log.Println("Shutting down API server...")
+	return s.httpSrv.Shutdown(ctx)
 }
 
 // Health check handler

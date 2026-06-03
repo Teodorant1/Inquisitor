@@ -10,7 +10,10 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"os/signal"
 	"sync"
+	"syscall"
+	"time"
 
 	"Inquisitor/api"
 	"Inquisitor/config"
@@ -76,7 +79,9 @@ func sendVisionRequest(apiKey string, b64Image string, sampleID int) (string, er
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", apiKey))
 
-	client := &http.Client{}
+	client := &http.Client{
+		Timeout: 60 * time.Second,
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
@@ -144,7 +149,9 @@ func uploadPDFFile(apiKey string, filePath string) (string, error) {
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", apiKey))
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
-	client := &http.Client{}
+	client := &http.Client{
+		Timeout: 60 * time.Second,
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
@@ -210,7 +217,9 @@ func sendPDFRequest(apiKey string, fileID string, sampleID int) (string, error) 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", apiKey))
 
-	client := &http.Client{}
+	client := &http.Client{
+		Timeout: 60 * time.Second,
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
@@ -251,6 +260,11 @@ func main() {
 	// Load configuration
 	cfg := config.Load()
 
+	// Validate configuration
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("Configuration error: %v", err)
+	}
+
 	// Initialize database
 	err := db.Initialize(cfg.DatabaseURL)
 	if err != nil {
@@ -279,8 +293,32 @@ func main() {
 	server.InitializeCleanup()
 
 	log.Printf("Starting Inquisitor API server on http://%s:%d\n", cfg.APIHost, cfg.APIPort)
-	if err := server.Start(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("Server error: %v", err)
+	
+	// Start server in a separate goroutine
+	serverErr := make(chan error, 1)
+	go func() {
+		err := server.Start()
+		if err != http.ErrServerClosed {
+			serverErr <- err
+		}
+		close(serverErr)
+	}()
+
+	// Set up signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	// Wait for either a signal or server error
+	select {
+	case sig := <-sigChan:
+		log.Printf("Received signal: %v. Initiating graceful shutdown...", sig)
+		if err := server.Shutdown(); err != nil {
+			log.Printf("Error during graceful shutdown: %v", err)
+		}
+	case err := <-serverErr:
+		if err != nil {
+			log.Fatalf("Server error: %v", err)
+		}
 	}
 }
 func analyze_main() {

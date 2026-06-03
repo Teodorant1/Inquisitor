@@ -131,7 +131,10 @@ func (s *Server) analyzeHandler(w http.ResponseWriter, r *http.Request) {
 	// Archive result in database with empty responses initially
 	configMap := make(map[string]interface{})
 	configJSON, _ := json.Marshal(finalConfig)
-	json.Unmarshal(configJSON, &configMap)
+	if err := json.Unmarshal(configJSON, &configMap); err != nil {
+		log.Printf("Warning: failed to unmarshal config: %v", err)
+		// Continue with empty map
+	}
 
 	emptyResponses := []string{}
 	result, err := db.CreateResult(uint(apiKeyID), username, inputType, tempFilePath, questions, emptyResponses, configMap)
@@ -220,8 +223,14 @@ func (s *Server) resultsHandler(w http.ResponseWriter, r *http.Request) {
 	for i, r := range results {
 		var questions []string
 		var responses []string
-		json.Unmarshal(r.QuestionsExtracted, &questions)
-		json.Unmarshal(r.AIResponses, &responses)
+		if err := json.Unmarshal(r.QuestionsExtracted, &questions); err != nil {
+			log.Printf("Warning: failed to unmarshal questions: %v", err)
+			questions = []string{}
+		}
+		if err := json.Unmarshal(r.AIResponses, &responses); err != nil {
+			log.Printf("Warning: failed to unmarshal responses: %v", err)
+			responses = []string{}
+		}
 
 		items[i] = ResultItem{
 			ID:             r.ID,
@@ -276,8 +285,14 @@ func (s *Server) jobStatusHandler(w http.ResponseWriter, r *http.Request) {
 	// Parse questions and responses
 	var questions []string
 	var responses []string
-	json.Unmarshal(result.QuestionsExtracted, &questions)
-	json.Unmarshal(result.AIResponses, &responses)
+	if err := json.Unmarshal(result.QuestionsExtracted, &questions); err != nil {
+		log.Printf("Warning: failed to unmarshal questions: %v", err)
+		questions = []string{}
+	}
+	if err := json.Unmarshal(result.AIResponses, &responses); err != nil {
+		log.Printf("Warning: failed to unmarshal responses: %v", err)
+		responses = []string{}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
