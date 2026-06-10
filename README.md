@@ -17,5 +17,3 @@
 
 <img width="1024" height="1024" alt="image" src="https://github.com/user-attachments/assets/686ee7c3-3ffa-4d1a-8370-41aa23556ee5" />
 
-
-![unnamed](https://github.com/user-attachments/assets/cbeabfba-18f3-40b5-af12-a11cd1f4fd8d)
