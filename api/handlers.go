@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"Inquisitor/db"
 	"Inquisitor/printer"
@@ -45,26 +44,28 @@ type GeneratePDFRequest struct {
 	Config    *printer.PDFConfig `json:"config,omitempty"`  // Optional custom PDF config
 }
 
-// analyzeHandler handles PDF/image analysis requests
+// analyzeHandler handles PDF/image analysis requests, archives states, and pushes instantly to async channels
 func (s *Server) analyzeHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Get username and API key ID from context (set by auth middleware)
+	// 1. Unpack credentials and track safety boundaries
 	username := r.Header.Get("X-Username")
 	apiKeyIDStr := r.Header.Get("X-APIKeyID")
-	apiKeyID, _ := strconv.ParseUint(apiKeyIDStr, 10, 32)
-
-	// Parse multipart form
-	err := r.ParseMultipartForm(50 * 1024 * 1024) // 50MB max
+	apiKeyID, err := strconv.ParseUint(apiKeyIDStr, 10, 32)
 	if err != nil {
+		http.Error(w, `{"error":"invalid or missing API key context"}`, http.StatusBadRequest)
+		return
+	}
+
+	// 2. Parse multi-part stream (50MB cap)
+	if err := r.ParseMultipartForm(50 * 1024 * 1024); err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"invalid form: %s"}`, err.Error()), http.StatusBadRequest)
 		return
 	}
 
-	// Get uploaded file
 	file, fileHeader, err := r.FormFile("file")
 	if err != nil {
 		http.Error(w, `{"error":"missing file"}`, http.StatusBadRequest)
@@ -72,41 +73,48 @@ func (s *Server) analyzeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// Determine file type
+	// 3. Determine input category accurately by trailing suffix
 	inputType := "pdf"
-	if strings.Contains(fileHeader.Filename, ".png") || strings.Contains(fileHeader.Filename, ".jpg") || strings.Contains(fileHeader.Filename, ".jpeg") {
+	lowerFilename := strings.ToLower(fileHeader.Filename)
+	if strings.HasSuffix(lowerFilename, ".png") || strings.HasSuffix(lowerFilename, ".jpg") || strings.HasSuffix(lowerFilename, ".jpeg") {
 		inputType = "image"
 	}
 
-	// Create temp directory if it doesn't exist
 	tmpDir := s.config.TempDir
-	os.MkdirAll(tmpDir, 0755)
+	_ = os.MkdirAll(tmpDir, 0755)
 
-	// Save uploaded file
-	tempFilePath := filepath.Join(tmpDir, fileHeader.Filename)
+	// FIX 1: Prevent Path Traversal by stripping directory paths via filepath.Base
+	safeFilename := filepath.Base(fileHeader.Filename)
+	tempFilePath := filepath.Join(tmpDir, safeFilename)
+
 	tempFile, err := os.Create(tempFilePath)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"failed to save file: %s"}`, err.Error()), http.StatusInternalServerError)
+		log.Printf("Error creating local temp file storage: %v", err)
+		http.Error(w, fmt.Sprintf(`{"error":"failed to save file locally: %s"}`, err.Error()), http.StatusInternalServerError)
 		return
 	}
-	defer tempFile.Close()
 
 	_, err = io.Copy(tempFile, file)
+	
+	// FIX 2: Explicitly close the file handle RIGHT NOW to force buffers to flush onto disk.
+	// This prevents the PDF text extraction engine from reading an incomplete or locked 0-byte file descriptor.
+	tempFile.Close()
+
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"failed to copy file: %s"}`, err.Error()), http.StatusInternalServerError)
+		log.Printf("Error streaming data blocks into file: %v", err)
+		http.Error(w, fmt.Sprintf(`{"error":"failed to fully copy stream data: %s"}`, err.Error()), http.StatusInternalServerError)
 		return
 	}
 
-	// Parse optional PDF config
+	// 4. Parse custom formatting configs
 	var pdfsConfig *printer.PDFConfig
 	if cfgStr := r.FormValue("pdf_config"); cfgStr != "" {
 		pdfsConfig = &printer.PDFConfig{}
 		if err := json.Unmarshal([]byte(cfgStr), pdfsConfig); err != nil {
-			log.Printf("Warning: failed to parse PDF config: %v", err)
+			log.Printf("Warning: failed to parse incoming custom PDF config: %v", err)
 		}
 	}
 
-	// Merge with defaults
 	finalConfig := pdfsConfig
 	if finalConfig == nil {
 		finalConfig = printer.GetDefaultPDFConfig()
@@ -114,45 +122,45 @@ func (s *Server) analyzeHandler(w http.ResponseWriter, r *http.Request) {
 		finalConfig = finalConfig.MergeWithDefaults()
 	}
 
-	// Process file and extract questions
+	// 5. Execute extraction engine routines
 	var questions []string
 	if inputType == "pdf" {
-		// Extract questions from PDF
+		// Now completely safe to execute because the write descriptor was closed above
 		questions, err = printer.ReadTextFromPDF(tempFilePath)
 		if err != nil {
-			log.Printf("Warning: failed to extract text from PDF: %v", err)
-			questions = []string{} // Continue with empty questions
+			log.Printf("Warning: text extraction subsystem hit an error on %s: %v", safeFilename, err)
+			questions = []string{} // Continues with empty array to avoid hard crashes
 		}
 	} else {
-		// For images, placeholder
 		questions = []string{"Image analysis not yet implemented"}
 	}
 
-	// Archive result in database with empty responses initially
+	// 6. Serialize configurations into generic DB formats
 	configMap := make(map[string]interface{})
 	configJSON, _ := json.Marshal(finalConfig)
-	if err := json.Unmarshal(configJSON, &configMap); err != nil {
-		log.Printf("Warning: failed to unmarshal config: %v", err)
-		// Continue with empty map
-	}
+	_ = json.Unmarshal(configJSON, &configMap)
 
 	emptyResponses := []string{}
 	result, err := db.CreateResult(uint(apiKeyID), username, inputType, tempFilePath, questions, emptyResponses, configMap)
 	if err != nil {
-		log.Printf("Error creating result: %v", err)
-		http.Error(w, fmt.Sprintf(`{"error":"failed to archive result: %s"}`, err.Error()), http.StatusInternalServerError)
+		log.Printf("Error registering results history index: %v", err)
+		http.Error(w, fmt.Sprintf(`{"error":"failed to archive initial calculation indices: %s"}`, err.Error()), http.StatusInternalServerError)
 		return
 	}
 
-	// Create async job for GPT analysis
+	// 7. Register processing tracker instance inside DB (State recovery)
 	job, err := db.CreateJob(result.ID)
 	if err != nil {
-		log.Printf("Error creating job: %v", err)
-		http.Error(w, fmt.Sprintf(`{"error":"failed to create job: %s"}`, err.Error()), http.StatusInternalServerError)
+		log.Printf("Error creating tracking task metadata context: %v", err)
+		http.Error(w, fmt.Sprintf(`{"error":"failed to record task context: %s"}`, err.Error()), http.StatusInternalServerError)
 		return
 	}
 
-	// Return 202 Accepted with job details
+	// FIX 3: Push directly to our local worker pool channel to start processing instantly, 
+	// bypassing the 2-second database polling lag entirely while keeping our worker limits.
+	s.EnqueueJob(job)
+
+	// 8. Return response immediately
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	response := AnalyzeResponse{
@@ -161,10 +169,7 @@ func (s *Server) analyzeHandler(w http.ResponseWriter, r *http.Request) {
 		JobID:     job.ID,
 		JobStatus: "pending",
 	}
-	json.NewEncoder(w).Encode(response)
-
-	// Clean up temp file (optional - keep for debugging)
-	// os.Remove(tempFilePath)
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 // ResultsResponse represents paginated results
@@ -311,57 +316,74 @@ func (s *Server) jobStatusHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// generatePDFHandler creates and returns a protected PDF
-func (s *Server) generatePDFHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+// downloadPDFHandler generates a physical PDF on disk, streams it to the browser, 
+// and immediately deletes it from the VPS hard drive once the download finishes.
+func (s *Server) downloadPDFHandler(w http.ResponseWriter, r *http.Request) {
+    if r.Method != http.MethodGet {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
 
-	// Parse request
-	var req GeneratePDFRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
-		return
-	}
+    // 1. Extract Result ID from the URL path (e.g., /download/42)
+    pathParts := strings.Split(r.URL.Path, "/")
+    if len(pathParts) < 3 {
+        http.Error(w, `{"error":"malformed download path"}`, http.StatusBadRequest)
+        return
+    }
+    idStr := pathParts[2]
 
-	if len(req.Questions) == 0 {
-		http.Error(w, `{"error":"questions array cannot be empty"}`, http.StatusBadRequest)
-		return
-	}
+    resultID, err := strconv.ParseUint(idStr, 10, 32)
+    if err != nil {
+        http.Error(w, `{"error":"invalid result id"}`, http.StatusBadRequest)
+        return
+    }
 
-	// Use custom config or defaults
-	config := req.Config
-	if config == nil {
-		config = printer.GetDefaultPDFConfig()
-	} else {
-		config = config.MergeWithDefaults()
-	}
+    // 2. Fetch the text answers out of your database
+    result, err := db.GetResultByID(uint(resultID))
+    if err != nil {
+        http.Error(w, `{"error":"result not found"}`, http.StatusNotFound)
+        return
+    }
 
-	// Generate PDF in memory (using temp file)
-	tempDir := s.config.TempDir
-	os.MkdirAll(tempDir, 0755)
+    // 3. Security Check: Make sure the user downloading it owns it
+    username := r.Header.Get("X-Username")
+    if result.Username != username {
+        http.Error(w, `{"error":"unauthorized"}`, http.StatusForbidden)
+        return
+    }
 
-	tempPDFPath := filepath.Join(tempDir, fmt.Sprintf("generated_%d.pdf", time.Now().UnixNano()))
+    var questions []string
+    if err := json.Unmarshal(result.QuestionsExtracted, &questions); err != nil {
+        log.Printf("Error unmarshaling questions: %v", err)
+        questions = []string{}
+    }
 
-	// Generate the PDF
-	printer.GenerateProtectedPDF(tempPDFPath, req.Questions)
+    // 4. Create the physical file path in your VPS temp directory
+    tempDir := s.config.TempDir
+    _ = os.MkdirAll(tempDir, 0755)
+    
+    outFilename := fmt.Sprintf("inquisitor_report_%d.pdf", result.ID)
+    tempPDFPath := filepath.Join(tempDir, outFilename)
 
-	// Read the generated PDF
-	pdfBytes, err := os.ReadFile(tempPDFPath)
-	if err != nil {
-		log.Printf("Error reading generated PDF: %v", err)
-		http.Error(w, `{"error":"failed to read generated PDF"}`, http.StatusInternalServerError)
-		return
-	}
+    // 5. Tell your printer engine to write the file to the disk path
+    err = printer.GenerateProtectedPDF(tempPDFPath, questions)
+    if err != nil {
+        log.Printf("PDF Generation Error: %v", err)
+        http.Error(w, `{"error":"failed to generate PDF file"}`, http.StatusInternalServerError)
+        return
+    }
 
-	// Clean up temp file
-	defer os.Remove(tempPDFPath)
+    // 6. Set headers so the browser triggers a real file saving prompt
+    w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", outFilename))
+    w.Header().Set("Content-Type", "application/pdf")
 
-	// Return PDF
-	w.Header().Set("Content-Type", "application/pdf")
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(pdfBytes)))
-	w.Header().Set("Content-Disposition", "attachment; filename=exam_protected.pdf")
-	w.WriteHeader(http.StatusOK)
-	w.Write(pdfBytes)
+    // 7. Stream the file to the user's browser. 
+    // This is synchronous and blocks this specific execution line until the client finishes downloading.
+    http.ServeFile(w, r, tempPDFPath)
+
+    // 8. THE PURGE: Now that ServeFile is done transmitting the data bytes over the network wire,
+    // we instantly wipe the file from the disk. Zero leaks, zero leftover storage clutter.
+    if err := os.Remove(tempPDFPath); err != nil {
+        log.Printf("Warning: Failed to auto-delete temporary file %s: %v", tempPDFPath, err)
+    }
 }

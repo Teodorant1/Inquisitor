@@ -1,26 +1,28 @@
 package main
 
 import (
+	"Inquisitor/config"
+	"Inquisitor/db"
 	"crypto/rand"
 	"encoding/hex"
 	"flag"
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"strconv"
 	"time"
-
-	"Inquisitor/config"
-	"Inquisitor/db"
 
 	"github.com/joho/godotenv"
 )
 
 func main() {
-	// Load environment variables
-	projectRoot := filepath.Join(filepath.Dir(os.Args[0]), "..", "..")
-	_ = godotenv.Load(filepath.Join(projectRoot, ".env"))
+	// FIX: Robust production environment discovery.
+	// 1. First, try loading a local .env file in the current working workspace directory.
+	// 2. If it fails, it will still naturally pull from the system environment variables on your VPS.
+	if err := godotenv.Load(); err != nil {
+		// Non-fatal warning log just in case you run it via environment variables instead of a file
+		log.Println("Note: No local .env file found, falling back to system environment variables.")
+	}
 
 	// Load config
 	cfg := config.Load()

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"Inquisitor/config"
+	"Inquisitor/db"
 )
 
 // Server represents the API server
@@ -26,7 +27,12 @@ func NewServer(cfg *config.Config) *Server {
 		config: cfg,
 	}
 }
-
+// EnqueueJob hands a job directly to the worker pool without waiting for the DB ticker
+func (s *Server) EnqueueJob(job *db.Job) {
+    if s.worker != nil {
+        s.worker.Submit(job)
+    }
+}
 // RegisterRoutes registers all API endpoints
 func (s *Server) RegisterRoutes() {
 	// Health check endpoint (no auth required, but includes request ID)
@@ -42,7 +48,7 @@ func (s *Server) RegisterRoutes() {
 	s.mux.HandleFunc("/job-status/", s.withRequestIDAuthOrigin(s.jobStatusHandler))
 
 	// PDF generation endpoint (requires auth + origin validation + request ID)
-	s.mux.HandleFunc("/generate-pdf", s.withRequestIDAuthOrigin(s.generatePDFHandler))
+	s.mux.HandleFunc("/generate-pdf", s.withRequestIDAuthOrigin(s.downloadPDFHandler))
 }
 
 // InitializeCleanup starts the background cleanup routine

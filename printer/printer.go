@@ -310,37 +310,41 @@ func ReadTextFromPDF(filename string) ([]string, error) {
 }
 
 // GenerateProtectedPDF is your original logic, now accepting the extracted questions
-func GenerateProtectedPDF(outputPDF string, questions []string) {
-	pdf := gofpdf.New("P", "mm", "A4", "")
-	pdf.AddPage()
-	pdf.AddUTF8Font("NotoSans", "", "NotoSans-Regular.ttf")
-	pdf.SetFont("NotoSans", "", 10)
+// GenerateProtectedPDF constructs the layout and returns an error if the file save fails
+func GenerateProtectedPDF(outputPDF string, questions []string) error {
+    pdf := gofpdf.New("P", "mm", "A4", "")
+    pdf.AddPage()
+    pdf.AddUTF8Font("NotoSans", "", "NotoSans-Regular.ttf")
+    pdf.SetFont("NotoSans", "", 10)
 
-	// Background protection & legal warnings
-	addCopyrightHeader(pdf)
-	addDiagonalWatermark(pdf, "")
-	addBigAIWarning(pdf, "VIOLATION OF ACADEMIC INTEGRITY - AI USE PROHIBITED AND MONITORED")
-	addAIScanWarning(pdf, 22.0)
-	addOfficialPartnershipNotice(pdf, 27.5)
-	addLegalFooter(pdf)
+    // Background protection & legal warnings
+    addCopyrightHeader(pdf)
+    addDiagonalWatermark(pdf, "")
+    addBigAIWarning(pdf, "VIOLATION OF ACADEMIC INTEGRITY - AI USE PROHIBITED AND MONITORED")
+    addAIScanWarning(pdf, 22.0)
+    addOfficialPartnershipNotice(pdf, 27.5)
+    addLegalFooter(pdf)
 
-	y := 26.0
-	pdf.SetTextColor(0, 0, 0)
-	
-	for _, question := range questions {
-		pdf.SetXY(15, y)
-		pdf.MultiCell(180, 5, question, "", "L", false)
-		
-		y = pdf.GetY() + 0.5
-		pdf.SetDrawColor(100, 100, 100)
-		pdf.Line(15, y, 100, y)
-		y += 5.5
-	}
+    y := 26.0
+    pdf.SetTextColor(0, 0, 0)
+    
+    for _, question := range questions {
+        pdf.SetXY(15, y)
+        pdf.MultiCell(180, 5, question, "", "L", false)
+        
+        y = pdf.GetY() + 0.5
+        pdf.SetDrawColor(100, 100, 100)
+        pdf.Line(15, y, 100, y)
+        y += 5.5
+    }
 
-	if err := pdf.OutputFileAndClose(outputPDF); err != nil {
-		log.Fatal(err)
-	}
-	log.Println("Protected PDF created successfully.")
+    // FIX: Return the error up the stack instead of killing the entire program process
+    if err := pdf.OutputFileAndClose(outputPDF); err != nil {
+        return fmt.Errorf("failed to write protected PDF to disk: %w", err)
+    }
+    
+    log.Println("Protected PDF created successfully.")
+    return nil
 }
 
 /* ... keep your helper functions: addBigAIWarning, addDiagonalWatermark, etc. ... */
