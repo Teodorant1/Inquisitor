@@ -28,18 +28,20 @@ func (APIKey) TableName() string {
 
 // Result represents an archived analysis result
 type Result struct {
-	ID                   uint            `gorm:"primaryKey"`
-	APIKeyID             uint            `gorm:"column:api_key_id;not null;index"`
-	Username             string          `gorm:"column:username;not null"`
-	InputType            string          `gorm:"column:input_type;not null"` // "pdf" or "image"
-	InputFilePath        string          `gorm:"column:input_file_path"`
-	QuestionsExtracted   datatypes.JSON  `gorm:"column:questions_extracted;type:json"` // JSON array of strings
-	AIResponses          datatypes.JSON  `gorm:"column:ai_responses;type:json"`        // JSON array of responses
-	PDFConfigUsed        datatypes.JSON  `gorm:"column:pdf_config_used;type:json"`     // Archived PDFConfig
-	CreatedAt            time.Time       `gorm:"column:created_at;autoCreateTime"`
-	APIKey               APIKey          `gorm:"foreignKey:APIKeyID"`
+    ID                 uint            `gorm:"primaryKey"`
+    APIKeyID           uint            `gorm:"column:api_key_id;not null;index"`
+    Username           string          `gorm:"column:username;not null"`
+    InputType          string          `gorm:"column:input_type;not null"` 
+    InputFilePath      string          `gorm:"column:input_file_path"`
+    
+    // Put these back to datatypes.JSON to stop the compiler errors!
+    QuestionsExtracted datatypes.JSON  `gorm:"column:questions_extracted;type:text"` 
+    AIResponses        datatypes.JSON  `gorm:"column:ai_responses;type:text"`        
+    
+    PDFConfigUsed      datatypes.JSON  `gorm:"column:pdf_config_used;type:text"` 
+    CreatedAt          time.Time       `gorm:"column:created_at;autoCreateTime"`
+    APIKey             APIKey          `gorm:"foreignKey:APIKeyID"`
 }
-
 // TableName specifies the table name
 func (Result) TableName() string {
 	return "results"
