@@ -64,16 +64,19 @@ func (s *StringSliceJSON) Scan(value interface{}) error {
 
 // ErrorLog represents an error event for tracking and debugging
 type ErrorLog struct {
-	ID           uint      `gorm:"primaryKey"`
-	RequestID    string    `gorm:"column:request_id;index"`
-	APIKeyID     *uint     `gorm:"column:api_key_id"`
-	Username     string    `gorm:"column:username;index"`
-	Endpoint     string    `gorm:"column:endpoint"`
-	ErrorCode    string    `gorm:"column:error_code"` // e.g. "err_pdf_001"
-	ErrorMessage string    `gorm:"column:error_message;type:text"`
-	StackTrace   string    `gorm:"column:stack_trace;type:text"`
-	StatusCode   int       `gorm:"column:status_code"`
-	CreatedAt    time.Time `gorm:"column:created_at;autoCreateTime"`
+    ID           uint      `gorm:"primaryKey"`
+    RequestID    string    `gorm:"column:request_id;index:idx_request_id,unique"` // Forces unique constraint index
+    APIKeyID     *uint     `gorm:"column:api_key_id"`
+    
+    // Create a composite index that binds username and created_at DESC together
+    Username     string    `gorm:"column:username;index:idx_user_errors,priority:1"`
+    CreatedAt    time.Time `gorm:"column:created_at;autoCreateTime;index:idx_user_errors,priority:2,sort:desc"`
+    
+    Endpoint     string    `gorm:"column:endpoint"`
+    ErrorCode    string    `gorm:"column:error_code"` 
+    ErrorMessage string    `gorm:"column:error_message;type:text"`
+    StackTrace   string    `gorm:"column:stack_trace;type:text"`
+    StatusCode   int       `gorm:"column:status_code"`
 }
 
 // TableName specifies the table name

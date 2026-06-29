@@ -32,41 +32,30 @@ func ValidateAPIKey(key string) (*APIKey, error) {
 }
 
 // CreateResult saves an analysis result to the database
-func CreateResult(apiKeyID uint, username string, inputType string, filePath string, 
-	questionsExtracted []string, aiResponses []string, pdfConfig map[string]interface{}) (*Result, error) {
-	
-	// Marshal questions and responses to JSON
-	questionsJSON, err := json.Marshal(questionsExtracted)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal questions: %w", err)
-	}
+// Inside your db package where you create a result:
+func CreateResult(apiKeyID uint, username, inputType, filePath string, questions, responses []string, config map[string]interface{}) (*Result, error) {
+    
+    // 1. Marshal the string arrays into clean JSON bytes
+    qBytes, _ := json.Marshal(questions)
+    rBytes, _ := json.Marshal(responses)
+    cBytes, _ := json.Marshal(config)
 
-	responsesJSON, err := json.Marshal(aiResponses)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal responses: %w", err)
-	}
+    result := &Result{
+        APIKeyID:           apiKeyID,
+        Username:           username,
+        InputType:          inputType,
+        InputFilePath:      filePath,
+        // 2. Cast the raw bytes directly to datatypes.JSON
+        QuestionsExtracted: datatypes.JSON(qBytes),
+        AIResponses:        datatypes.JSON(rBytes),
+        PDFConfigUsed:      datatypes.JSON(cBytes),
+    }
 
-	configJSON, err := json.Marshal(pdfConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal PDF config: %w", err)
-	}
-
-	result := &Result{
-		APIKeyID:           apiKeyID,
-		Username:           username,
-		InputType:          inputType,
-		InputFilePath:      filePath,
-		QuestionsExtracted: datatypes.JSON(questionsJSON),
-		AIResponses:        datatypes.JSON(responsesJSON),
-		PDFConfigUsed:      datatypes.JSON(configJSON),
-	}
-
-	if err := DB.Create(result).Error; err != nil {
-		return nil, fmt.Errorf("failed to create result: %w", err)
-	}
-
-	return result, nil
-}
+    if err := DB.Create(result).Error; err != nil {
+        return nil, err
+    }
+    return result, nil
+}		
 
 // GetResultByID retrieves a result by its ID
 func GetResultByID(resultID uint) (*Result, error) {
