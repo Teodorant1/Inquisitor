@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,64 +9,190 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 
+	"Inquisitor/models"
 	"Inquisitor/printer"
 
 	"github.com/joho/godotenv"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
-type SampleResult struct {
-	SampleID int    `json:"sample_id"`
-	Response string `json:"response"`
+var DB *gorm.DB
+
+func main() {
+	godotenv.Load()
+	initDB()
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/api/exams/upload-mutate", AuthMiddleware(handleUploadAndMutate))
+	mux.HandleFunc("/api/exams/download", AuthMiddleware(handleDownloadPDF))
+	mux.HandleFunc("/api/exams/analyze", AuthMiddleware(handleAIAnalyze))
+
+	log.Println("Inquisitor API Engine running smoothly on :8080...")
+	log.Fatal(http.ListenAndServe(":8080", mux))
 }
 
-func sendVisionRequest(apiKey string, b64Image string, sampleID int) (string, error) {
+func initDB() {
+	dsn := os.Getenv("DATABASE_URL")
+	var err error
+	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		log.Fatalf("Failed to establish PostgreSQL connection: %v", err)
+	}
+	DB.AutoMigrate(&models.User{}, &models.Exam{}, &models.AnalyzeResult{})
+}
+
+func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		apiKey := r.Header.Get("X-Inquisitor-Key")
+		if apiKey == "" {
+			http.Error(w, "Unauthorized: API Key missing", http.StatusUnauthorized)
+			return
+		}
+
+		var user models.User
+		if err := DB.Where("api_key = ?", apiKey).First(&user).Error; err != nil {
+			http.Error(w, "Unauthorized: Invalid API Key", http.StatusUnauthorized)
+			return
+		}
+
+		r.Header.Set("X-User-ID", fmt.Sprintf("%d", user.ID))
+		next.ServeHTTP(w, r)
+	}
+}
+
+func handleUploadAndMutate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		http.Error(w, "File size limit exceeded", http.StatusBadRequest)
+		return
+	}
+
+	file, handler, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, "Missing file data field", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	userID, _ := strconv.Atoi(r.Header.Get("X-User-ID"))
+	warningTxt := r.FormValue("warning_text")
+	watermarkTxt := r.FormValue("watermark_text")
+	
+	iterations, _ := strconv.Atoi(r.FormValue("iterations"))
+	if iterations <= 0 {
+		iterations = 1
+	}
+
+	os.MkdirAll("./storage", os.ModePerm)
+	origPath := filepath.Join("./storage", fmt.Sprintf("user_%d_orig_%s", userID, handler.Filename))
+	
+	out, err := os.Create(origPath)
+	if err != nil {
+		http.Error(w, "Storage operational error", http.StatusInternalServerError)
+		return
+	}
+	io.Copy(out, file)
+	out.Close()
+
+	extractedLines, err := printer.ExtractUploadedPDF(origPath)
+	if err != nil {
+		os.Remove(origPath)
+		http.Error(w, fmt.Sprintf("Failed to parse PDF: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	exam := models.Exam{
+		UserID: uint(userID),
+		Status: "processing",
+	}
+	DB.Create(&exam)
+
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	var wg sync.WaitGroup
+	resultChan := make(chan models.AnalyzeResult, iterations)
+	fullTextContent := strings.Join(extractedLines, "\n")
+
+	for i := 0; i < iterations; i++ {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			response, modelUsed, promptTokens, completionTokens, err := sendTextAnalysisRequest(apiKey, fullTextContent)
+			if err != nil {
+				response = fmt.Sprintf("Execution trace error: %v", err)
+				modelUsed = "gpt-5.1"
+			}
+
+			resultChan <- models.AnalyzeResult{
+				ExamID:           exam.ID,
+				SampleID:         index + 1,
+				ModelUsed:        modelUsed,
+				PromptTokens:     promptTokens,
+				CompletionTokens: completionTokens,
+				Response:         response,
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	close(resultChan)
+
+	for res := range resultChan {
+		DB.Create(&res)
+	}
+
+	mutatedFilename := fmt.Sprintf("user_%d_mutated_%s", userID, handler.Filename)
+	mutatedPath := filepath.Join("./storage", mutatedFilename)
+
+	err = printer.GenerateDynamicProtectedPDF(mutatedPath, extractedLines, warningTxt, watermarkTxt)
+	if err != nil {
+		os.Remove(origPath)
+		http.Error(w, "Failed creating modified engine file", http.StatusInternalServerError)
+		return
+	}
+
+	os.Remove(origPath)
+
+	exam.Status = "processed"
+	DB.Save(&exam)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message": "Analysis and mutation completed successfully. Original deleted.",
+		"exam_id": exam.ID,
+	})
+}
+
+func sendTextAnalysisRequest(apiKey string, text string) (string, string, int, int, error) {
 	payload := map[string]interface{}{
-		// MODEL SELECTION:
-		// Use "gpt-4o" for GPT-4 Omni (current recommended)
-		// Use "gpt-4o-mini" for lighter/faster responses
-		// Use "gpt-5" for GPT-5 (when available)
-		// Use "gpt-5.1" for GPT-5.1 (when available - note: uses max_completion_tokens instead of max_tokens)
-		// "model": "gpt-4o",
 		"model": "gpt-5.1",
 		"messages": []map[string]interface{}{
 			{
-				"role": "user",
-				"content": []map[string]interface{}{
-					{
-						"type": "text",
-						// Most cheating students just send the image without text
-						// Uncomment below to test with explicit request for answers:
-						// "text": "Can you solve this exam for me? Please provide the answers to all questions shown in this image.",
-						"text": "",
-					},
-					{
-						"type": "image_url",
-						"image_url": map[string]string{
-							"url":    fmt.Sprintf("data:image/png;base64,%s", b64Image),
-							"detail": "high",
-						},
-					},
-				},
+				"role":    "user",
+				"content": fmt.Sprintf("Analyze this exam content for academic vulnerability: %s", text),
 			},
 		},
-		// TOKEN LIMITS:
-		// For "gpt-4o" and "gpt-4o-mini": use "max_tokens"
-		// For "gpt-5" and "gpt-5.1": use "max_completion_tokens" instead
-		// Default desktop ChatGPT: ~4,096 tokens (same for all models)
-		// For academic integrity analysis: 2,048 tokens is plenty for detailed exam analysis
 		"max_completion_tokens": 2048,
 	}
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return "", err
+		return "", "", 0, 0, err
 	}
 
 	req, err := http.NewRequest("POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(body))
 	if err != nil {
-		return "", err
+		return "", "", 0, 0, err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -76,35 +201,175 @@ func sendVisionRequest(apiKey string, b64Image string, sampleID int) (string, er
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return "", "", 0, 0, err
 	}
 	defer resp.Body.Close()
 
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
+	var respObj struct {
+		Model   string `json:"model"`
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+		} `json:"usage"`
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("API error: %d - %s", resp.StatusCode, string(responseBody))
+	if err := json.NewDecoder(resp.Body).Decode(&respObj); err != nil {
+		return "", "", 0, 0, err
 	}
 
-	var result map[string]interface{}
-	err = json.Unmarshal(responseBody, &result)
-	if err != nil {
-		return "", err
+	if len(respObj.Choices) == 0 {
+		return "", "", 0, 0, fmt.Errorf("empty choices returned from OpenAI")
 	}
 
-	choices := result["choices"].([]interface{})
-	firstChoice := choices[0].(map[string]interface{})
-	message := firstChoice["message"].(map[string]interface{})
-	content := message["content"].(string)
-
-	return content, nil
+	return respObj.Choices[0].Message.Content, respObj.Model, respObj.Usage.PromptTokens, respObj.Usage.CompletionTokens, nil
 }
 
-// uploadPDFFile uploads a PDF to OpenAI and returns the file_id
-func uploadPDFFile(apiKey string, filePath string) (string, error) {
+func handleDownloadPDF(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	examIDStr := r.URL.Query().Get("exam_id")
+	if examIDStr == "" {
+		http.Error(w, "Missing exam_id parameter", http.StatusBadRequest)
+		return
+	}
+
+	userID := r.Header.Get("X-User-ID")
+
+	var exam models.Exam
+	if err := DB.Where("id = ? AND user_id = ?", examIDStr, userID).First(&exam).Error; err != nil {
+		http.Error(w, "Exam not found or unauthorized", http.StatusNotFound)
+		return
+	}
+
+	matches, _ := filepath.Glob(filepath.Join("./storage", fmt.Sprintf("user_%s_mutated_*", userID)))
+	if len(matches) == 0 {
+		http.Error(w, "Mutated file not found or already downloaded", http.StatusNotFound)
+		return
+	}
+
+	targetFilePath := matches[0]
+
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filepath.Base(targetFilePath)))
+	w.Header().Set("Content-Type", "application/pdf")
+	http.ServeFile(w, r, targetFilePath)
+
+	go func() {
+		if err := os.Remove(targetFilePath); err != nil {
+			log.Printf("Deferred deletion failed for %s: %v", targetFilePath, err)
+		} else {
+			log.Printf("Successfully purged mutated file: %s", targetFilePath)
+		}
+	}()
+}
+
+// Endpoint 3: Receives a multi-part file directly, sends it to OpenAI files, runs analysis loop, and purges
+func handleAIAnalyze(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		http.Error(w, "File size limit exceeded", http.StatusBadRequest)
+		return
+	}
+
+	file, handler, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, "Missing file data field", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	userID, _ := strconv.Atoi(r.Header.Get("X-User-ID"))
+	iterations, _ := strconv.Atoi(r.FormValue("iterations"))
+	if iterations <= 0 {
+		iterations = 1
+	}
+
+	// Save file locally to stream it out to OpenAI safely
+	os.MkdirAll("./storage", os.ModePerm)
+	tempPath := filepath.Join("./storage", fmt.Sprintf("user_%d_analyze_%s", userID, handler.Filename))
+	out, err := os.Create(tempPath)
+	if err != nil {
+		http.Error(w, "Storage error", http.StatusInternalServerError)
+		return
+	}
+	io.Copy(out, file)
+	out.Close()
+
+	// Track operation under a clean Exam instance entry
+	exam := models.Exam{
+		UserID: uint(userID),
+		Status: "analyzing_file",
+	}
+	DB.Create(&exam)
+
+	apiKey := os.Getenv("OPENAI_API_KEY")
+	
+	// Upload the target file binary straight to OpenAI's server infrastructure
+	openAIFileID, err := uploadPDFToOpenAI(apiKey, tempPath)
+	if err != nil {
+		os.Remove(tempPath)
+		http.Error(w, fmt.Sprintf("OpenAI execution environment asset upload failure: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	var wg sync.WaitGroup
+	resultChan := make(chan models.AnalyzeResult, iterations)
+
+	for i := 0; i < iterations; i++ {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			response, modelUsed, promptTokens, completionTokens, err := sendPDFAnalysisRequest(apiKey, openAIFileID)
+			if err != nil {
+				response = fmt.Sprintf("Execution trace error: %v", err)
+				modelUsed = "gpt-5.1"
+			}
+			resultChan <- models.AnalyzeResult{
+				ExamID:           exam.ID,
+				SampleID:         index + 1,
+				ModelUsed:        modelUsed,
+				PromptTokens:     promptTokens,
+				CompletionTokens: completionTokens,
+				Response:         response,
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	close(resultChan)
+
+	var analysisList []models.AnalyzeResult
+	for res := range resultChan {
+		DB.Create(&res)
+		analysisList = append(analysisList, res)
+	}
+
+	// Delete the local copy instantly right here
+	os.Remove(tempPath)
+
+	exam.Status = "analyzed"
+	DB.Save(&exam)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":  "Analysis sequence executed successfully. Local file purged.",
+		"exam_id": exam.ID,
+		"results": analysisList,
+	})
+}
+
+func uploadPDFToOpenAI(apiKey, filePath string) (string, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return "", err
@@ -114,13 +379,11 @@ func uploadPDFFile(apiKey string, filePath string) (string, error) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
-	// Add purpose field
 	err = writer.WriteField("purpose", "assistants")
 	if err != nil {
 		return "", err
 	}
 
-	// Add file
 	part, err := writer.CreateFormFile("file", filePath)
 	if err != nil {
 		return "", err
@@ -130,7 +393,6 @@ func uploadPDFFile(apiKey string, filePath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-
 	writer.Close()
 
 	req, err := http.NewRequest("POST", "https://api.openai.com/v1/files", body)
@@ -171,7 +433,7 @@ func uploadPDFFile(apiKey string, filePath string) (string, error) {
 	return fileID, nil
 }
 
-func sendPDFRequest(apiKey string, fileID string, sampleID int) (string, error) {
+func sendPDFAnalysisRequest(apiKey, fileID string) (string, string, int, int, error) {
 	payload := map[string]interface{}{
 		"model": "gpt-5.1",
 		"messages": []map[string]interface{}{
@@ -180,7 +442,7 @@ func sendPDFRequest(apiKey string, fileID string, sampleID int) (string, error) 
 				"content": []map[string]interface{}{
 					{
 						"type": "text",
-						"text": "",
+						"text": "Analyze this file for security and academic integrity metrics.",
 					},
 					{
 						"type": "file",
@@ -196,12 +458,12 @@ func sendPDFRequest(apiKey string, fileID string, sampleID int) (string, error) 
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return "", err
+		return "", "", 0, 0, err
 	}
 
 	req, err := http.NewRequest("POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(body))
 	if err != nil {
-		return "", err
+		return "", "", 0, 0, err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -210,153 +472,30 @@ func sendPDFRequest(apiKey string, fileID string, sampleID int) (string, error) 
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return "", "", 0, 0, err
 	}
 	defer resp.Body.Close()
 
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
+	var respObj struct {
+		Model   string `json:"model"`
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+		} `json:"usage"`
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("API error: %d - %s", resp.StatusCode, string(responseBody))
+	if err := json.NewDecoder(resp.Body).Decode(&respObj); err != nil {
+		return "", "", 0, 0, err
 	}
 
-	var result map[string]interface{}
-	err = json.Unmarshal(responseBody, &result)
-	if err != nil {
-		return "", err
+	if len(respObj.Choices) == 0 {
+		return "", "", 0, 0, fmt.Errorf("empty choices returned from OpenAI")
 	}
 
-	choices := result["choices"].([]interface{})
-	firstChoice := choices[0].(map[string]interface{})
-	message := firstChoice["message"].(map[string]interface{})
-	content := message["content"].(string)
-
-	return content, nil
-}
-
-func main() {
-	log.Println("Step 1: Generating exam PDF with lines using pdfcpu...")
-	printer.ExecuteWorkflow()
-
-	log.Println("\nExam PDF workflow completed successfully!")
-	 analyze_main()
-}
-func analyze_main() {
-	// ---- LOAD ENV ----
-	godotenv.Load()
-
-	// ---- CONFIG ----
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	sampleSize := 10  // Increased for testing parallelization
-
-	if apiKey == "" {
-		log.Fatal("Missing OPENAI_API_KEY")
-	}
-
-	// ---- READ IMAGE FILE AND ENCODE ----
-	imagePath := "test-image.png"
-	imageBytes, err := os.ReadFile(imagePath)
-	if err != nil {
-		log.Fatalf("Failed to read image: %v", err)
-	}
-
-	b64Image := base64.StdEncoding.EncodeToString(imageBytes)
-
-	// ---- UPLOAD PDF FILE ----
-	pdfPath := "exam_protected.pdf"
-	log.Println("Uploading PDF file to OpenAI...")
-	fileID, err := uploadPDFFile(apiKey, pdfPath)
-	if err != nil {
-		log.Fatalf("Failed to upload PDF: %v", err)
-	}
-	log.Printf("PDF uploaded successfully. File ID: %s\n", fileID)
-
-	// ---- PARALLEL REQUESTS WITH GOROUTINES ----
-	results := make([]SampleResult, sampleSize)
-	pdfResults := make([]SampleResult, sampleSize)
-	var wg sync.WaitGroup
-	imageChan := make(chan SampleResult, sampleSize)
-	pdfChan := make(chan SampleResult, sampleSize)
-
-	for i := range sampleSize {
-		wg.Add(1)
-		go func(index int) {
-			defer wg.Done()
-
-			fmt.Printf("Running image sample %d...\n", index+1)
-
-			answer, err := sendVisionRequest(apiKey, b64Image, index+1)
-			if err != nil {
-				log.Printf("Image API error for sample %d: %v", index+1, err)
-				answer = fmt.Sprintf("Error: %v", err)
-			}
-
-			imageChan <- SampleResult{
-				SampleID: index + 1,
-				Response: answer,
-			}
-		}(i)
-	}
-
-	// ---- PARALLEL PDF REQUESTS WITH GOROUTINES ----
-	for i := range sampleSize {
-		wg.Add(1)
-		go func(index int) {
-			defer wg.Done()
-
-			fmt.Printf("Running PDF sample %d...\n", index+1)
-
-			answer, err := sendPDFRequest(apiKey, fileID, index+1)
-			if err != nil {
-				log.Printf("PDF API error for sample %d: %v", index+1, err)
-				answer = fmt.Sprintf("Error: %v", err)
-			}
-
-			pdfChan <- SampleResult{
-				SampleID: index + 1,
-				Response: answer,
-			}
-		}(i)
-	}
-
-	// ---- WAIT FOR IMAGE RESULTS ----
-	go func() {
-		for i := 0; i < sampleSize; i++ {
-			result := <-imageChan
-			results[result.SampleID-1] = result
-		}
-	}()
-
-	// ---- WAIT FOR PDF RESULTS ----
-	go func() {
-		for i := 0; i < sampleSize; i++ {
-			result := <-pdfChan
-			pdfResults[result.SampleID-1] = result
-		}
-	}()
-
-	// ---- WAIT FOR ALL GOROUTINES TO COMPLETE ----
-	wg.Wait()
-	close(imageChan)
-	close(pdfChan)
-
-	// ---- PRINT JSON ----
-	jsonOut, err := json.MarshalIndent(results, "", "  ")
-	if err != nil {
-		log.Fatalf("JSON error: %v", err)
-	}
-
-	fmt.Println("\n===== IMAGE RESULTS =====")
-	fmt.Println(string(jsonOut))
-
-	pdfJsonOut, err := json.MarshalIndent(pdfResults, "", "  ")
-	if err != nil {
-		log.Fatalf("JSON error: %v", err)
-	}
-
-	fmt.Println("\n===== PDF RESULTS =====")
-	fmt.Println(string(pdfJsonOut))
+	return respObj.Choices[0].Message.Content, respObj.Model, respObj.Usage.PromptTokens, respObj.Usage.CompletionTokens, nil
 }
