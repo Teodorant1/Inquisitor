@@ -25,6 +25,8 @@ import (
 var DB *gorm.DB
 
 func main() {
+
+
 	godotenv.Load()
 	initDB()
 
@@ -45,9 +47,22 @@ func initDB() {
 	if err != nil {
 		log.Fatalf("Failed to establish PostgreSQL connection: %v", err)
 	}
-	DB.AutoMigrate(&models.User{}, &models.Exam{}, &models.AnalyzeResult{})
-}
 
+	// 1. Run your schema synchronizations first
+	DB.AutoMigrate(&models.User{}, &models.Exam{}, &models.AnalyzeResult{})
+
+	// 2. Safely extract the underlying generic sql.DB handle
+	sqlDB, err := DB.DB()
+	if err != nil {
+		log.Fatalf("Failed to extract underlying SQL connection pool: %v", err)
+	}
+
+	// 3. Configure connection rules for Neon's transaction pooler
+	sqlDB.SetMaxIdleConns(2)
+	sqlDB.SetMaxOpenConns(10)
+	
+	log.Println("Database initialized and connection pool configured successfully.")
+}
 func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		apiKey := r.Header.Get("X-Inquisitor-Key")
@@ -73,6 +88,7 @@ func handleUploadAndMutate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Parse multipart payload safely up to 32MB
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		http.Error(w, "File size limit exceeded", http.StatusBadRequest)
 		return
@@ -86,9 +102,24 @@ func handleUploadAndMutate(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 
 	userID, _ := strconv.Atoi(r.Header.Get("X-User-ID"))
-	warningTxt := r.FormValue("warning_text")
-	watermarkTxt := r.FormValue("watermark_text")
-	
+
+	// 1. Extract and evaluate standalone 'usedefault' field
+	useDefaultStr := r.FormValue("usedefault")
+	useDefault := true // Default behavior if parameter isn't passed down
+	if strings.ToLower(useDefaultStr) == "false" {
+		useDefault = false
+	}
+
+	// 2. Extract and parse structured 'pdfconfig' field JSON data payload
+	var cfg printer.PDFConfig
+	configJSON := r.FormValue("pdfconfig")
+	if configJSON != "" {
+		if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
+			http.Error(w, fmt.Sprintf("Invalid structural configuration JSON: %v", err), http.StatusBadRequest)
+			return
+		}
+	}
+
 	iterations, _ := strconv.Atoi(r.FormValue("iterations"))
 	if iterations <= 0 {
 		iterations = 1
@@ -154,7 +185,8 @@ func handleUploadAndMutate(w http.ResponseWriter, r *http.Request) {
 	mutatedFilename := fmt.Sprintf("user_%d_mutated_%s", userID, handler.Filename)
 	mutatedPath := filepath.Join("./storage", mutatedFilename)
 
-	err = printer.GenerateDynamicProtectedPDF(mutatedPath, extractedLines, warningTxt, watermarkTxt)
+	// Pass parsed struct properties and useDefault value directly to mutated layout engine
+	err = printer.GenerateDynamicProtectedPDF(mutatedPath, extractedLines, cfg, useDefault)
 	if err != nil {
 		os.Remove(origPath)
 		http.Error(w, "Failed creating modified engine file", http.StatusInternalServerError)
