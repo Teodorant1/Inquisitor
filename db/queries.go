@@ -24,9 +24,9 @@ func ValidateAPIKey(key string) (*APIKey, error) {
 	}
 
 	// Check if expired
-	if apiKey.ExpiresAt != nil && time.Now().After(*apiKey.ExpiresAt) {
-		return nil, errors.New("API key has expired")
-	}
+	// if apiKey.ExpiresAt != nil && time.Now().After(*apiKey.ExpiresAt) {
+	// 	return nil, errors.New("API key has expired")
+	// }
 
 	return &apiKey, nil
 }
@@ -114,7 +114,7 @@ func CreateAPIKey(key string, username string, expiresAt time.Time) (*APIKey, er
 		Key:       key,
 		Username:  username,
 		Active:    true,
-		ExpiresAt: &expiresAt,
+		// ExpiresAt: &expiresAt,
 		RateLimit: 1000, // Default rate limit
 	}
 

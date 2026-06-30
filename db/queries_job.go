@@ -47,31 +47,33 @@ func UpdateJobStatus(jobID uint, status string) error {
 }
 
 // UpdateJobStarted marks a job as processing and sets start time
-func UpdateJobStarted(jobID uint) error {
-	now := time.Now()
-	return DB.Model(&Job{}).Where("id = ?", jobID).Updates(map[string]interface{}{
-		"status":     "processing",
-		"started_at": &now,
-	}).Error
+// UpdateJobStarted marks a job as processing, sets start time, and updates the struct instance
+func UpdateJobStarted(job *Job) error {
+    now := time.Now()
+    job.Status = "processing"
+    job.StartedAt = &now
+
+    // This updates the row on disk based on the primary key, matching the RAM changes
+    return DB.Model(job).Select("Status", "StartedAt").Updates(job).Error
 }
 
-// UpdateJobCompleted marks a job as completed with end time
-func UpdateJobCompleted(jobID uint) error {
-	now := time.Now()
-	return DB.Model(&Job{}).Where("id = ?", jobID).Updates(map[string]interface{}{
-		"status":       "completed",
-		"completed_at": &now,
-	}).Error
+// UpdateJobCompleted marks a job as completed with end time and updates the struct instance
+func UpdateJobCompleted(job *Job) error {
+    now := time.Now()
+    job.Status = "completed"
+    job.CompletedAt = &now
+
+    return DB.Model(job).Select("Status", "CompletedAt").Updates(job).Error
 }
 
-// UpdateJobFailed marks a job as failed with error message
-func UpdateJobFailed(jobID uint, errorMsg string) error {
-	now := time.Now()
-	return DB.Model(&Job{}).Where("id = ?", jobID).Updates(map[string]interface{}{
-		"status":         "failed",
-		"completed_at":   &now,
-		"error_message":  errorMsg,
-	}).Error
+// UpdateJobFailed marks a job as failed with error message and updates the struct instance
+func UpdateJobFailed(job *Job, errorMsg string) error {
+    now := time.Now()
+    job.Status = "failed"
+    job.CompletedAt = &now
+    job.ErrorMessage = errorMsg
+
+    return DB.Model(job).Select("Status", "CompletedAt", "ErrorMessage").Updates(job).Error
 }
 
 // GetJobByResultID retrieves a job by result ID

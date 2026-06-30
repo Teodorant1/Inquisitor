@@ -16,7 +16,6 @@ type APIKey struct {
 	Username  string            `gorm:"column:username;not null"`
 	Active    bool              `gorm:"column:active;default:true"`
 	CreatedAt time.Time         `gorm:"column:created_at;autoCreateTime"`
-	ExpiresAt *time.Time        `gorm:"column:expires_at"`
 	RateLimit int               `gorm:"column:rate_limit;default:1000"` // requests per day
 	Results   []Result          `gorm:"foreignKey:APIKeyID"`
 }
@@ -33,10 +32,11 @@ type Result struct {
     Username           string          `gorm:"column:username;not null"`
     InputType          string          `gorm:"column:input_type;not null"` 
     InputFilePath      string          `gorm:"column:input_file_path"`
-    
-    // Put these back to datatypes.JSON to stop the compiler errors!
     QuestionsExtracted datatypes.JSON  `gorm:"column:questions_extracted;type:text"` 
     AIResponses        datatypes.JSON  `gorm:"column:ai_responses;type:text"`        
+    
+    // 💎 Track how many parallel variations the user requested (default to 1)
+    AnalysisRuns       int             `gorm:"column:analysis_runs;default:1"`
     
     PDFConfigUsed      datatypes.JSON  `gorm:"column:pdf_config_used;type:text"` 
     CreatedAt          time.Time       `gorm:"column:created_at;autoCreateTime"`

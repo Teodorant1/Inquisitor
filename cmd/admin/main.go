@@ -120,7 +120,7 @@ func handleCreateKey() {
 	fmt.Printf("Key ID:         %d\n", key.ID)
 	fmt.Printf("Status:         Active\n")
 	fmt.Printf("Created:        %s\n", key.CreatedAt.Format(time.RFC3339))
-	fmt.Printf("Expires:        %s\n", key.ExpiresAt.Format(time.RFC3339))
+	// fmt.Printf("Expires:        %s\n", key.ExpiresAt.Format(time.RFC3339))
 	fmt.Println("\n⚠️  Save this API key securely - you won't be able to see it again!")
 }
 
@@ -183,7 +183,7 @@ func handleListKeys() {
 			displayKey,
 			status,
 			key.CreatedAt.Format("2006-01-02"),
-			key.ExpiresAt.Format("2006-01-02"),
+			// key.ExpiresAt.Format("2006-01-02"),
 		)
 	}
 }
