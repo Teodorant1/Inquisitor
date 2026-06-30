@@ -15,5 +15,5 @@
 5. Make sure poppler-windows is installed and the bin is added to path , the one i used successfully is https://github.com/oschwartz10612/poppler-windows/releases/tag/v25.12.0-0 
 6. Type "GO RUN ." in terminal to make the program run and read the results in terminal.
 
+<img width="1024" height="1024" alt="image" src="https://github.com/user-attachments/assets/686ee7c3-3ffa-4d1a-8370-41aa23556ee5" />
 
-![unnamed](https://github.com/user-attachments/assets/cbeabfba-18f3-40b5-af12-a11cd1f4fd8d)
