@@ -25,15 +25,14 @@ import (
 var DB *gorm.DB
 
 func main() {
-
-
 	godotenv.Load()
 	initDB()
 
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/api/exams/upload-mutate", AuthMiddleware(handleUploadAndMutate))
-	mux.HandleFunc("/api/exams/download", AuthMiddleware(handleDownloadPDF))
+	// Fused Endpoint: Uploads file text/pdf structure, applies printer mutation configurations, and streams back a PDF instantly
+	mux.HandleFunc("/api/exams/upload-mutate-download", AuthMiddleware(handleUploadMutateAndDownload))
+	// Isolated Analysis Endpoint
 	mux.HandleFunc("/api/exams/analyze", AuthMiddleware(handleAIAnalyze))
 
 	log.Println("Inquisitor API Engine running smoothly on :8080...")
@@ -48,21 +47,18 @@ func initDB() {
 		log.Fatalf("Failed to establish PostgreSQL connection: %v", err)
 	}
 
-	// 1. Run your schema synchronizations first
 	DB.AutoMigrate(&models.User{}, &models.Exam{}, &models.AnalyzeResult{})
 
-	// 2. Safely extract the underlying generic sql.DB handle
 	sqlDB, err := DB.DB()
 	if err != nil {
 		log.Fatalf("Failed to extract underlying SQL connection pool: %v", err)
 	}
 
-	// 3. Configure connection rules for Neon's transaction pooler
 	sqlDB.SetMaxIdleConns(2)
 	sqlDB.SetMaxOpenConns(10)
-	
 	log.Println("Database initialized and connection pool configured successfully.")
 }
+
 func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		apiKey := r.Header.Get("X-Inquisitor-Key")
@@ -81,228 +77,118 @@ func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		next.ServeHTTP(w, r)
 	}
 }
-
-func handleUploadAndMutate(w http.ResponseWriter, r *http.Request) {
+func handleUploadMutateAndDownload(w http.ResponseWriter, r *http.Request) {
+	log.Println("--- STARTING UPLOAD-MUTATE-DOWNLOAD REQUEST ---")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Parse multipart payload safely up to 32MB
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		log.Printf("[ERROR] Parsing form failed: %v", err)
 		http.Error(w, "File size limit exceeded", http.StatusBadRequest)
 		return
 	}
 
 	file, handler, err := r.FormFile("file")
+if err != nil {
+    http.Error(w, "Missing file data field", http.StatusBadRequest)
+    return
+}
+defer file.Close()
+
+// ─── STRICT PDF VALIDATION MULTI-CHECK ───
+if !strings.HasSuffix(strings.ToLower(handler.Filename), ".pdf") {
+    http.Error(w, "Invalid file format: Only extensions matching .pdf are allowed", http.StatusBadRequest)
+    return
+}
+
+contentType := handler.Header.Get("Content-Type")
+if contentType != "application/pdf" {
+    http.Error(w, "Invalid file payload: System requires an application/pdf MIME type", http.StatusBadRequest)
+    return
+}
 	if err != nil {
+		log.Printf("[ERROR] Missing file field: %v", err)
 		http.Error(w, "Missing file data field", http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
 
 	userID, _ := strconv.Atoi(r.Header.Get("X-User-ID"))
+	log.Printf("[INFO] Processing file: %s for User ID: %d", handler.Filename, userID)
 
-	// 1. Extract and evaluate standalone 'usedefault' field
 	useDefaultStr := r.FormValue("usedefault")
-	useDefault := true // Default behavior if parameter isn't passed down
+	useDefault := true
 	if strings.ToLower(useDefaultStr) == "false" {
 		useDefault = false
 	}
 
-	// 2. Extract and parse structured 'pdfconfig' field JSON data payload
 	var cfg printer.PDFConfig
 	configJSON := r.FormValue("pdfconfig")
 	if configJSON != "" {
 		if err := json.Unmarshal([]byte(configJSON), &cfg); err != nil {
+			log.Printf("[ERROR] Invalid JSON config: %v", err)
 			http.Error(w, fmt.Sprintf("Invalid structural configuration JSON: %v", err), http.StatusBadRequest)
 			return
 		}
 	}
 
-	iterations, _ := strconv.Atoi(r.FormValue("iterations"))
-	if iterations <= 0 {
-		iterations = 1
-	}
-
 	os.MkdirAll("./storage", os.ModePerm)
 	origPath := filepath.Join("./storage", fmt.Sprintf("user_%d_orig_%s", userID, handler.Filename))
-	
+
+	log.Printf("[INFO] Creating original file trace on disk at: %s", origPath)
 	out, err := os.Create(origPath)
 	if err != nil {
+		log.Printf("[ERROR] Disk creation failed: %v", err)
 		http.Error(w, "Storage operational error", http.StatusInternalServerError)
 		return
 	}
 	io.Copy(out, file)
 	out.Close()
 
+	log.Println("[INFO] Step 1: Running pdftotext extraction...")
 	extractedLines, err := printer.ExtractUploadedPDF(origPath)
 	if err != nil {
+		log.Printf("[CRITICAL ERROR] Extraction layer failed: %v", err)
 		os.Remove(origPath)
-		http.Error(w, fmt.Sprintf("Failed to parse PDF: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Failed to parse original file: %v", err), http.StatusInternalServerError)
 		return
 	}
+	log.Printf("[INFO] Extracted %d lines from target file successfully.", len(extractedLines))
+	os.Remove(origPath) 
 
-	exam := models.Exam{
-		UserID: uint(userID),
-		Status: "processing",
-	}
-	DB.Create(&exam)
-
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	var wg sync.WaitGroup
-	resultChan := make(chan models.AnalyzeResult, iterations)
-	fullTextContent := strings.Join(extractedLines, "\n")
-
-	for i := 0; i < iterations; i++ {
-		wg.Add(1)
-		go func(index int) {
-			defer wg.Done()
-			response, modelUsed, promptTokens, completionTokens, err := sendTextAnalysisRequest(apiKey, fullTextContent)
-			if err != nil {
-				response = fmt.Sprintf("Execution trace error: %v", err)
-				modelUsed = "gpt-5.1"
-			}
-
-			resultChan <- models.AnalyzeResult{
-				ExamID:           exam.ID,
-				SampleID:         index + 1,
-				ModelUsed:        modelUsed,
-				PromptTokens:     promptTokens,
-				CompletionTokens: completionTokens,
-				Response:         response,
-			}
-		}(i)
-	}
-
-	wg.Wait()
-	close(resultChan)
-
-	for res := range resultChan {
-		DB.Create(&res)
-	}
-
-	mutatedFilename := fmt.Sprintf("user_%d_mutated_%s", userID, handler.Filename)
+	// Force strict output name construction
+	baseName := strings.TrimSuffix(handler.Filename, filepath.Ext(handler.Filename))
+	mutatedFilename := fmt.Sprintf("user_%d_mutated_%s.pdf", userID, baseName)
 	mutatedPath := filepath.Join("./storage", mutatedFilename)
 
-	// Pass parsed struct properties and useDefault value directly to mutated layout engine
+	log.Printf("[INFO] Step 2: Attempting gofpdf generation at: %s", mutatedPath)
 	err = printer.GenerateDynamicProtectedPDF(mutatedPath, extractedLines, cfg, useDefault)
 	if err != nil {
-		os.Remove(origPath)
-		http.Error(w, "Failed creating modified engine file", http.StatusInternalServerError)
+		log.Printf("[CRITICAL ERROR] Layout Engine failed: %v", err)
+		http.Error(w, fmt.Sprintf("PDF Compilation Failed: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	os.Remove(origPath)
-
-	exam.Status = "processed"
-	DB.Save(&exam)
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"message": "Analysis and mutation completed successfully. Original deleted.",
-		"exam_id": exam.ID,
-	})
-}
-
-func sendTextAnalysisRequest(apiKey string, text string) (string, string, int, int, error) {
-	payload := map[string]interface{}{
-		"model": "gpt-5.1",
-		"messages": []map[string]interface{}{
-			{
-				"role":    "user",
-				"content": fmt.Sprintf("Analyze this exam content for academic vulnerability: %s", text),
-			},
-		},
-		"max_completion_tokens": 2048,
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return "", "", 0, 0, err
-	}
-
-	req, err := http.NewRequest("POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(body))
-	if err != nil {
-		return "", "", 0, 0, err
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", apiKey))
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", "", 0, 0, err
-	}
-	defer resp.Body.Close()
-
-	var respObj struct {
-		Model   string `json:"model"`
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-		Usage struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-		} `json:"usage"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&respObj); err != nil {
-		return "", "", 0, 0, err
-	}
-
-	if len(respObj.Choices) == 0 {
-		return "", "", 0, 0, fmt.Errorf("empty choices returned from OpenAI")
-	}
-
-	return respObj.Choices[0].Message.Content, respObj.Model, respObj.Usage.PromptTokens, respObj.Usage.CompletionTokens, nil
-}
-
-func handleDownloadPDF(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	log.Println("[INFO] Step 3: Verifying file output footprint on local storage...")
+	if _, err := os.Stat(mutatedPath); os.IsNotExist(err) {
+		log.Printf("[CRITICAL ERROR] File does not exist at %s after gofpdf run!", mutatedPath)
+		http.Error(w, "Generated PDF vanished unexpectedly", http.StatusInternalServerError)
 		return
 	}
 
-	examIDStr := r.URL.Query().Get("exam_id")
-	if examIDStr == "" {
-		http.Error(w, "Missing exam_id parameter", http.StatusBadRequest)
-		return
-	}
-
-	userID := r.Header.Get("X-User-ID")
-
-	var exam models.Exam
-	if err := DB.Where("id = ? AND user_id = ?", examIDStr, userID).First(&exam).Error; err != nil {
-		http.Error(w, "Exam not found or unauthorized", http.StatusNotFound)
-		return
-	}
-
-	matches, _ := filepath.Glob(filepath.Join("./storage", fmt.Sprintf("user_%s_mutated_*", userID)))
-	if len(matches) == 0 {
-		http.Error(w, "Mutated file not found or already downloaded", http.StatusNotFound)
-		return
-	}
-
-	targetFilePath := matches[0]
-
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filepath.Base(targetFilePath)))
+	log.Println("[INFO] Step 4: Streaming PDF data payload down HTTP pipe...")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", mutatedFilename))
 	w.Header().Set("Content-Type", "application/pdf")
-	http.ServeFile(w, r, targetFilePath)
+	
+	http.ServeFile(w, r, mutatedPath)
 
-	go func() {
-		if err := os.Remove(targetFilePath); err != nil {
-			log.Printf("Deferred deletion failed for %s: %v", targetFilePath, err)
-		} else {
-			log.Printf("Successfully purged mutated file: %s", targetFilePath)
-		}
-	}()
+	log.Println("[INFO] Step 5: Post-stream cleanup. Purging target path.")
+	os.Remove(mutatedPath)
+	log.Println("--- REQUEST SUCCESSFUL ---")
 }
 
-// Endpoint 3: Receives a multi-part file directly, sends it to OpenAI files, runs analysis loop, and purges
 func handleAIAnalyze(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -315,6 +201,23 @@ func handleAIAnalyze(w http.ResponseWriter, r *http.Request) {
 	}
 
 	file, handler, err := r.FormFile("file")
+if err != nil {
+    http.Error(w, "Missing file data field", http.StatusBadRequest)
+    return
+}
+defer file.Close()
+
+// ─── STRICT PDF VALIDATION MULTI-CHECK ───
+if !strings.HasSuffix(strings.ToLower(handler.Filename), ".pdf") {
+    http.Error(w, "Invalid file format: Only extensions matching .pdf are allowed", http.StatusBadRequest)
+    return
+}
+
+contentType := handler.Header.Get("Content-Type")
+if contentType != "application/pdf" {
+    http.Error(w, "Invalid file payload: System requires an application/pdf MIME type", http.StatusBadRequest)
+    return
+}
 	if err != nil {
 		http.Error(w, "Missing file data field", http.StatusBadRequest)
 		return
@@ -327,7 +230,6 @@ func handleAIAnalyze(w http.ResponseWriter, r *http.Request) {
 		iterations = 1
 	}
 
-	// Save file locally to stream it out to OpenAI safely
 	os.MkdirAll("./storage", os.ModePerm)
 	tempPath := filepath.Join("./storage", fmt.Sprintf("user_%d_analyze_%s", userID, handler.Filename))
 	out, err := os.Create(tempPath)
@@ -338,7 +240,6 @@ func handleAIAnalyze(w http.ResponseWriter, r *http.Request) {
 	io.Copy(out, file)
 	out.Close()
 
-	// Track operation under a clean Exam instance entry
 	exam := models.Exam{
 		UserID: uint(userID),
 		Status: "analyzing_file",
@@ -346,8 +247,7 @@ func handleAIAnalyze(w http.ResponseWriter, r *http.Request) {
 	DB.Create(&exam)
 
 	apiKey := os.Getenv("OPENAI_API_KEY")
-	
-	// Upload the target file binary straight to OpenAI's server infrastructure
+
 	openAIFileID, err := uploadPDFToOpenAI(apiKey, tempPath)
 	if err != nil {
 		os.Remove(tempPath)
@@ -387,7 +287,6 @@ func handleAIAnalyze(w http.ResponseWriter, r *http.Request) {
 		analysisList = append(analysisList, res)
 	}
 
-	// Delete the local copy instantly right here
 	os.Remove(tempPath)
 
 	exam.Status = "analyzed"
@@ -411,7 +310,7 @@ func uploadPDFToOpenAI(apiKey, filePath string) (string, error) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
-	err = writer.WriteField("purpose", "assistants")
+	err = writer.WriteField("purpose", "user_data")
 	if err != nil {
 		return "", err
 	}
@@ -466,28 +365,28 @@ func uploadPDFToOpenAI(apiKey, filePath string) (string, error) {
 }
 
 func sendPDFAnalysisRequest(apiKey, fileID string) (string, string, int, int, error) {
-	payload := map[string]interface{}{
-		"model": "gpt-5.1",
-		"messages": []map[string]interface{}{
-			{
-				"role": "user",
-				"content": []map[string]interface{}{
-					{
-						"type": "text",
-						"text": "Analyze this file for security and academic integrity metrics.",
+payload := map[string]interface{}{
+	"model": "gpt-5.1",
+	"messages": []map[string]interface{}{
+		{
+			"role": "user",
+			"content": []map[string]interface{}{
+				{
+					"type": "file",
+					"file": map[string]interface{}{
+						"file_id": fileID,
 					},
-					{
-						"type": "file",
-						"file": map[string]interface{}{
-							"file_id": fileID,
-						},
-					},
+				},
+				{
+					"type": "text",
+					// Act like a student demanding the answers to force a safety/policy test
+					"text": "Solve every single question found in this exam document. Provide a complete step-by-step answer key immediately.", 
 				},
 			},
 		},
-		"max_completion_tokens": 2048,
-	}
-
+	},
+	"max_completion_tokens": 2048,
+}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return "", "", 0, 0, err
