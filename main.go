@@ -224,7 +224,7 @@ if contentType != "application/pdf" {
 	}
 	defer file.Close()
 
-	userID, _ := strconv.Atoi(r.Header.Get("X-User-ID"))
+	userID := r.Header.Get("X-User-ID")
 	iterations, _ := strconv.Atoi(r.FormValue("iterations"))
 	if iterations <= 0 {
 		iterations = 1
@@ -241,8 +241,9 @@ if contentType != "application/pdf" {
 	out.Close()
 
 	exam := models.Exam{
-		UserID: uint(userID),
+		UserID: userID,
 		Status: "analyzing_file",
+		OriginalFile: handler.Filename,
 	}
 	DB.Create(&exam)
 
