@@ -20,6 +20,7 @@ import (
 	"github.com/joho/godotenv"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
 
 var DB *gorm.DB
@@ -42,12 +43,22 @@ func main() {
 func initDB() {
 	dsn := os.Getenv("DATABASE_URL")
 	var err error
-	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
-	if err != nil {
+DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
+		NamingStrategy: schema.NamingStrategy{
+			// Ensures everything conforms to a singular naming standard 
+			// if you choose to drop manual TableName() overrides later
+			SingularTable: true, 
+		},
+	})
+		if err != nil {
 		log.Fatalf("Failed to establish PostgreSQL connection: %v", err)
 	}
 
-	DB.AutoMigrate(&models.User{}, &models.Exam{}, &models.AnalyzeResult{})
+	// Automigrate the updated schema layouts smoothly
+	err = DB.AutoMigrate(&models.User{}, &models.Exam{}, &models.AnalyzeResult{})
+	if err != nil {
+		log.Fatalf("Failed to complete database AutoMigration: %v", err)
+	}
 
 	sqlDB, err := DB.DB()
 	if err != nil {
@@ -73,7 +84,13 @@ func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		r.Header.Set("X-User-ID", fmt.Sprintf("%d", user.ID))
+        // 2. The Activation Gatekeeper Check // [!code ++]
+        if !user.IsActivated { // [!code ++]
+            http.Error(w, "Forbidden: Account is not activated", http.StatusForbidden) // [!code ++]
+            return // [!code ++] (Halts the endpoint immediately)
+        } // [!code ++]
+
+		r.Header.Set("X-User-ID", fmt.Sprintf("%s", user.ID))
 		next.ServeHTTP(w, r)
 	}
 }
