@@ -9,7 +9,7 @@ import (
 
 // UUIDModel replaces gorm.Model to keep your code architecture identical
 type UUIDModel struct {
-	ID        string         `gorm:"type:uuid;primaryKey"`
+	ID        string         `gorm:"type:uuid;primaryKey;default:uuid_generate_v4()"` // Uses PostgreSQL's uuid_generate_v4() function
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	DeletedAt gorm.DeletedAt `gorm:"index"` // Keeps GORM's native soft-delete working
@@ -21,26 +21,10 @@ func (m *UUIDModel) BeforeCreate(tx *gorm.DB) (err error) {
 	return
 }
 
-// BetterAuthModel provides a string-based primary key compatible with Node/TS auth libraries
-type BetterAuthModel struct {
-	ID        string         `gorm:"type:text;primaryKey"` // Safe for Better Auth string tokens
-	CreatedAt time.Time      `gorm:"column:created_at"`
-	UpdatedAt time.Time      `gorm:"column:updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index;column:deleted_at"` // Preserves your GORM soft-deletes
-}
 
-// BeforeCreate hooks into GORM's lifecycle to generate a string ID if empty
-func (m *BetterAuthModel) BeforeCreate(tx *gorm.DB) (err error) {
-	if m.ID == "" {
-		// Better Auth generates text strings. For Go side creations, 
-		// generating a standard stringified UUIDv4 works perfectly over text columns.
-		m.ID = uuid.NewString() 
-	}
-	return
-}
 
 type User struct {
-	BetterAuthModel
+	UUIDModel          // Replaces gorm.Model
 	Username      string `gorm:"unique;not null"`
 	Password      string `gorm:"not null"`
 	APIKey        string `gorm:"unique;not null;index;column:api_key"`
