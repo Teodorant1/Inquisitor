@@ -248,7 +248,7 @@ if contentType != "application/pdf" {
 	}
 
 	os.MkdirAll("./storage", os.ModePerm)
-	tempPath := filepath.Join("./storage", fmt.Sprintf("user_%d_analyze_%s", userID, handler.Filename))
+	tempPath := filepath.Join("./storage", fmt.Sprintf("user_%d_analyze_%s", "userID", handler.Filename))
 	out, err := os.Create(tempPath)
 	if err != nil {
 		http.Error(w, "Storage error", http.StatusInternalServerError)
