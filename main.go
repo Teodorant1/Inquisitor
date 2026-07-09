@@ -72,6 +72,8 @@ DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
 
 func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		
+		fmt.Print("printing via authmiddleware" , r.Body)
 		apiKey := r.Header.Get("X-Inquisitor-Key")
 		if apiKey == "" {
 			http.Error(w, "Unauthorized: API Key missing", http.StatusUnauthorized)
@@ -248,7 +250,7 @@ if contentType != "application/pdf" {
 	}
 
 	os.MkdirAll("./storage", os.ModePerm)
-	tempPath := filepath.Join("./storage", fmt.Sprintf("user_%d_analyze_%s", userID, handler.Filename))
+	tempPath := filepath.Join("./storage", fmt.Sprintf("user_%d_analyze_%s", "userID", handler.Filename))
 	out, err := os.Create(tempPath)
 	if err != nil {
 		http.Error(w, "Storage error", http.StatusInternalServerError)
