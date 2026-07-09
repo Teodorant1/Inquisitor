@@ -42,18 +42,23 @@ type PDFConfig struct {
 	FooterFontSize    float64  `json:"footer_font_size,omitempty"`
 	FontName          string   `json:"font_name,omitempty"`
 	FontFilePath      string   `json:"font_file_path,omitempty"`
+	WatermarkStepX    float64  `json:"watermark_step_x,omitempty"` // Added for dynamic grid width	
+	WatermarkStepY    float64  `json:"watermark_step_y,omitempty"` // Added for dynamic grid height
 }
 
 func (c *PDFConfig) ApplyDefaults(useDefault bool) {
-	if !useDefault {
+	if useDefault == false {
 		return
 	}
-	c.PageWidth = 210.0
-	c.PageHeight = 297.0
-	c.MarginLeft = 10.0
-	c.MarginRight = 10.0
-	c.MarginTop = 10.0
-	c.MarginBottom = 10.0
+	fmt.Println("[Info]: Applying default PDF configuration values for A4 layout and security watermarks.")
+
+	
+	// c.PageWidth = 210.0
+	// c.PageHeight = 297.0
+	// c.MarginLeft = 10.0
+	// c.MarginRight = 10.0
+	// c.MarginTop = 10.0
+	// c.MarginBottom = 10.0
 	c.WatermarkTexts = []string{"UNAUTHORIZED AI USE PROHIBITED", "ACADEMIC INTEGRITY MONITOR"}
 	c.WatermarkAngle = -45.0
 	c.WatermarkOpacity = 0.15
@@ -63,15 +68,15 @@ func (c *PDFConfig) ApplyDefaults(useDefault bool) {
 	c.CopyrightFontSize = 7.0
 	c.WarningTitle = "VIOLATION OF ACADEMIC INTEGRITY - AI USE PROHIBITED AND MONITORED"
 	c.WarningColor = "#FF0000"
-	c.WarningFontSize = 11.0
+	// c.WarningFontSize = 11.0
 	c.AIWarningText = "SECURITY WARNING: THIS DOCUMENT IS EMBEDDED WITH FORENSIC ANTI-AI CANARY STRINGS."
 	c.AIWarningColor = "#B40000"
 	c.AIWarningFontSize = 6.0
 	c.OfficialNotice = "OFFICIAL INQUISITOR SECURITY LAYOUT PROTECTION PROTOTYPE"
 	c.NoticeColor = "#003366"
-	c.NoticeFontSize = 8.0
+	// c.NoticeFontSize = 8.0
 	c.QuestionsTitle = "Exam Questions"
-	c.QuestionFontSize = 10.0
+	// c.QuestionFontSize = 10.0
 	c.QuestionColor = "#000000"
 	c.AnswerLineHeight = 8.0
 	c.FooterText = "SECURED BY INQUISITOR SYSTEM WORKFLOWS"
@@ -81,6 +86,22 @@ func (c *PDFConfig) ApplyDefaults(useDefault bool) {
 	// Default custom configuration values
 	c.FontName = "NotoSans"
 	c.FontFilePath = "./NotoSans-Regular.ttf"
+	c.WatermarkStepX = 88.0         // 40% of 220.0 (Brings elements closer horizontally)
+	c.WatermarkStepY = 44.0
+
+// Set explicit PostScript point units for true A4 dimensions
+    c.PageWidth = 595.28  
+    c.PageHeight = 841.89 
+    c.MarginLeft = 28.35  
+    c.MarginRight = 28.35 
+    c.MarginTop = 28.35    
+    c.MarginBottom = 28.35 
+    
+    // Scale up your baseline fonts relative to your new point grid layout
+    c.QuestionFontSize = 12.0
+    c.WarningFontSize = 14.0
+    c.NoticeFontSize = 11.0
+
 }
 
 func HexToRGB(hexStr string) (int, int, int) {
@@ -118,26 +139,40 @@ func GenerateDynamicProtectedPDF(outputPDF string, questions []string, cfg PDFCo
 		pdf.SetFont(cfg.FontName, "", cfg.QuestionFontSize)
 	}
 
-	// Draw Background Watermarks
+// Draw Background Watermarks
 	if len(cfg.WatermarkTexts) > 0 {
 		pageW, pageH := pdf.GetPageSize()
-		r, g, b := HexToRGB("#DCDCDC")
-		pdf.SetTextColor(r, g, b)
+		
+		if cfg.FontName == "Arial" {
+			pdf.SetFont("Arial", "", cfg.WatermarkFontSize)
+		} else {
+			pdf.SetFont(cfg.FontName, "", cfg.WatermarkFontSize)
+		}
+		
+		pdf.SetTextColor(180, 180, 180)
 		pdf.SetAlpha(cfg.WatermarkOpacity, "Normal")
 		
-		spacing := 60.0
-		watermarkStr := strings.Join(cfg.WatermarkTexts, "  |  ")
+		// 1. INCREASE HORIZONTAL GAP BETWEEN WORDS IN THE SAME LINE:
+		// Changed from 6 spaces to 16 spaces to stretch it out horizontally
+		watermarkStr := strings.Join(cfg.WatermarkTexts, "                |                ")
 		
-		for y := -pageH; y < pageH*2; y += spacing {
-			for x := -pageW; x < pageW*2; x += spacing {
+		// 2. INCREASE THE GRID STEPPING VALUES:
+		// stepX: Controls horizontal distance between columns (Up from ~130)
+		// stepY: Controls vertical distance between rows (Up from ~65)
+		stepX := 90.0 
+		stepY := 80.0  
+		
+		// Expanded bounds slightly to make sure margins are cleanly covered at wide steps
+		for y := -20.0; y < pageH+150; y += stepY {
+			for x := -100.0; x < pageW+150; x += stepX {
 				pdf.TransformBegin()
-				pdf.SetXY(x, y)
 				pdf.TransformRotate(cfg.WatermarkAngle, x, y)
 				pdf.Text(x, y, watermarkStr)
 				pdf.TransformEnd()
 			}
 		}
-		pdf.SetAlpha(1.0, "Normal")
+		
+		pdf.SetAlpha(1.0, "Normal") 
 	}
 
 	// Warning Title

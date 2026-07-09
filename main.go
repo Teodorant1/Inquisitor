@@ -72,6 +72,8 @@ DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
 
 func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		
+		fmt.Print("printing via authmiddleware" , r.Body)
 		apiKey := r.Header.Get("X-Inquisitor-Key")
 		if apiKey == "" {
 			http.Error(w, "Unauthorized: API Key missing", http.StatusUnauthorized)
