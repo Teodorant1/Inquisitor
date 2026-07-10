@@ -1,6 +1,8 @@
 package main
 
 import (
+	"Inquisitor/models"
+	"Inquisitor/printer"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -13,9 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-
-	"Inquisitor/models"
-	"Inquisitor/printer"
+	"time"
 
 	"github.com/joho/godotenv"
 	"gorm.io/driver/postgres"
@@ -178,8 +178,21 @@ if contentType != "application/pdf" {
 	os.Remove(origPath) 
 
 	// Force strict output name construction
+	// baseName := strings.TrimSuffix(handler.Filename, filepath.Ext(handler.Filename))
+	// mutatedFilename := fmt.Sprintf("user_%d_mutated_%s.pdf", userID, baseName)
+	//  NEW CODE:
+	// mutatedFilename := fmt.Sprintf("updated_%s", handler.Filename)
+	// mutatedPath := filepath.Join("./storage", mutatedFilename)
+
+	// 1. Get the current Unix timestamp as a string
+	unixSeconds := fmt.Sprintf("%d", time.Now().Unix())
+
+// 2. Separate the base name and the extension
 	baseName := strings.TrimSuffix(handler.Filename, filepath.Ext(handler.Filename))
-	mutatedFilename := fmt.Sprintf("user_%d_mutated_%s.pdf", userID, baseName)
+	ext := filepath.Ext(handler.Filename) // This will be ".pdf"
+
+// 3. Combine them: updated_ + originalName + _ + timestamp + .pdf
+	mutatedFilename := fmt.Sprintf("updated_%s_%s%s", baseName, unixSeconds, ext)
 	mutatedPath := filepath.Join("./storage", mutatedFilename)
 
 	log.Printf("[INFO] Step 2: Attempting gofpdf generation at: %s", mutatedPath)
@@ -250,7 +263,17 @@ if contentType != "application/pdf" {
 	}
 
 	os.MkdirAll("./storage", os.ModePerm)
-	tempPath := filepath.Join("./storage", fmt.Sprintf("user_%d_analyze_%s", "userID", handler.Filename))
+	// 1. Get current unix timestamp
+	unixSeconds := fmt.Sprintf("%d", time.Now().Unix())
+
+	// 2. Separate base name and extension
+	baseName := strings.TrimSuffix(handler.Filename, filepath.Ext(handler.Filename))
+	ext := filepath.Ext(handler.Filename)
+
+	// 3. FIX: Use the actual userID variable, and append unix seconds for uniqueness
+	// Note: Since userID is already a string in this function (from r.Header.Get), we use %s instead of %d
+	tempFilename := fmt.Sprintf("user_%s_analyze_%s_%s%s", userID, baseName, unixSeconds, ext)
+	tempPath := filepath.Join("./storage", tempFilename)
 	out, err := os.Create(tempPath)
 	if err != nil {
 		http.Error(w, "Storage error", http.StatusInternalServerError)
