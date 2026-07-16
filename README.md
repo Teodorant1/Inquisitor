@@ -11,7 +11,7 @@
 3. Go to https://platform.openai.com/ and acquire an API key for ChatGPT , and also set the spending limits to 10 and 5 dollars, the very minimum, so you don't bankrupt yourself by accident.
 4. Create a .env in the root and add the API key with the name OPENAI_API_KEY in it and add other values from .env.example
 5. Make sure poppler-windows is installed and the bin is added to path , the one i used successfully is https://github.com/oschwartz10612/poppler-windows/releases/tag/v25.12.0-0 (if you are on Macintosh you can install Poppler via homebrew via terminal command)
-6. Type "GO RUN ." in terminal to make the program run and start the server
+6. Type "GO RUN ." in terminal to make the program run and start the server and create the database if it doesn't exist yet.
 7. Make sure you also have the frontend running, available at https://github.com/Teodorant1/inquisitor-requiem
 
 <img width="1024" height="1024" alt="image" src="https://github.com/user-attachments/assets/686ee7c3-3ffa-4d1a-8370-41aa23556ee5" />
