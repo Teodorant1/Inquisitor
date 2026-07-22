@@ -26,6 +26,8 @@ import (
 var DB *gorm.DB
 
 func main() {
+
+
 	godotenv.Load()
 	initDB()
 
