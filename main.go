@@ -222,129 +222,127 @@ if contentType != "application/pdf" {
 	os.Remove(mutatedPath)
 	log.Println("--- REQUEST SUCCESSFUL ---")
 }
-
 func handleAIAnalyze(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return
-	}
+    if r.Method != http.MethodPost {
+        http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+        return
+    }
 
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		http.Error(w, "File size limit exceeded", http.StatusBadRequest)
-		return
-	}
+    if err := r.ParseMultipartForm(32 << 20); err != nil {
+        http.Error(w, "File size limit exceeded", http.StatusBadRequest)
+        return
+    }
 
-	file, handler, err := r.FormFile("file")
-if err != nil {
-    http.Error(w, "Missing file data field", http.StatusBadRequest)
-    return
+    file, handler, err := r.FormFile("file")
+    if err != nil {
+        http.Error(w, "Missing file data field", http.StatusBadRequest)
+        return
+    }
+    defer file.Close()
+
+    // ─── STRICT PDF VALIDATION MULTI-CHECK ───
+    if !strings.HasSuffix(strings.ToLower(handler.Filename), ".pdf") {
+        http.Error(w, "Invalid file format: Only extensions matching .pdf are allowed", http.StatusBadRequest)
+        return
+    }
+
+    contentType := handler.Header.Get("Content-Type")
+    if contentType != "application/pdf" {
+        http.Error(w, "Invalid file payload: System requires an application/pdf MIME type", http.StatusBadRequest)
+        return
+    }
+
+    userID := r.Header.Get("X-User-ID")
+    iterations, _ := strconv.Atoi(r.FormValue("iterations"))
+    if iterations <= 0 {
+        iterations = 1
+    }
+
+    os.MkdirAll("./storage", os.ModePerm)
+    unixSeconds := fmt.Sprintf("%d", time.Now().Unix())
+    baseName := strings.TrimSuffix(handler.Filename, filepath.Ext(handler.Filename))
+    ext := filepath.Ext(handler.Filename)
+
+    tempFilename := fmt.Sprintf("user_%s_analyze_%s_%s%s", userID, baseName, unixSeconds, ext)
+    tempPath := filepath.Join("./storage", tempFilename)
+    out, err := os.Create(tempPath)
+    if err != nil {
+        http.Error(w, "Storage error", http.StatusInternalServerError)
+        return
+    }
+    io.Copy(out, file)
+    out.Close()
+
+    // 🦞 DEFER REMOVAL: Automatically purges tempPath when handleAIAnalyze finishes
+    defer os.Remove(tempPath)
+
+    // Create initial Exam record in DB
+    exam := models.Exam{
+        UserID:       userID,
+        Status:       "analyzing_file",
+        OriginalFile: handler.Filename,
+    }
+    DB.Create(&exam) // GORM auto-populates exam.ID upon creation
+
+    apiKey := os.Getenv("OPENAI_API_KEY")
+
+    // Upload file to OpenAI before launching the background task
+    openAIFileID, err := uploadPDFToOpenAI(apiKey, tempPath)
+    if err != nil {
+        exam.Status = "failed"
+        DB.Save(&exam)
+        http.Error(w, fmt.Sprintf("OpenAI execution environment asset upload failure: %v", err), http.StatusInternalServerError)
+        return
+    }
+
+    // 🚀 BACKGROUND GOROUTINE
+    go func(examID string, fileID string, totalIterations int) {
+        var wg sync.WaitGroup
+        resultChan := make(chan models.AnalyzeResult, totalIterations)
+
+        for i := 0; i < totalIterations; i++ {
+            wg.Add(1)
+            go func(index int) {
+                defer wg.Done()
+                response, modelUsed, promptTokens, completionTokens, err := sendPDFAnalysisRequest(apiKey, fileID)
+                if err != nil {
+                    response = fmt.Sprintf("Execution trace error: %v", err)
+                    modelUsed = "gpt-5.1"
+                }
+                
+                resultChan <- models.AnalyzeResult{
+                    ExamID:           examID,
+                    SampleID:         index + 1,
+                    ModelUsed:        modelUsed,
+                    PromptTokens:     promptTokens,
+                    CompletionTokens: completionTokens,
+                    Response:         response,
+                }
+            }(i)
+        }
+
+        wg.Wait()
+        close(resultChan)
+
+        // Save all analysis results to DB
+        for res := range resultChan {
+            DB.Create(&res)
+        }
+
+        // Update exam status to completed
+        DB.Model(&models.Exam{}).Where("id = ?", examID).Update("status", "analyzed")
+    }(exam.ID, openAIFileID, iterations)
+
+    // ⚡ IMMEDIATE HTTP RESPONSE
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(http.StatusAccepted) // 202 Accepted indicates job is queued/processing
+    json.NewEncoder(w).Encode(map[string]interface{}{
+        "status":        "queued",
+        "message":       "Analysis job queued successfully.",
+        "exam_id":       exam.ID,
+        "original_file": exam.OriginalFile,
+    })
 }
-defer file.Close()
-
-// ─── STRICT PDF VALIDATION MULTI-CHECK ───
-if !strings.HasSuffix(strings.ToLower(handler.Filename), ".pdf") {
-    http.Error(w, "Invalid file format: Only extensions matching .pdf are allowed", http.StatusBadRequest)
-    return
-}
-
-contentType := handler.Header.Get("Content-Type")
-if contentType != "application/pdf" {
-    http.Error(w, "Invalid file payload: System requires an application/pdf MIME type", http.StatusBadRequest)
-    return
-}
-	if err != nil {
-		http.Error(w, "Missing file data field", http.StatusBadRequest)
-		return
-	}
-	defer file.Close()
-
-	userID := r.Header.Get("X-User-ID")
-	iterations, _ := strconv.Atoi(r.FormValue("iterations"))
-	if iterations <= 0 {
-		iterations = 1
-	}
-
-	os.MkdirAll("./storage", os.ModePerm)
-	// 1. Get current unix timestamp
-	unixSeconds := fmt.Sprintf("%d", time.Now().Unix())
-
-	// 2. Separate base name and extension
-	baseName := strings.TrimSuffix(handler.Filename, filepath.Ext(handler.Filename))
-	ext := filepath.Ext(handler.Filename)
-
-	// 3. FIX: Use the actual userID variable, and append unix seconds for uniqueness
-	// Note: Since userID is already a string in this function (from r.Header.Get), we use %s instead of %d
-	tempFilename := fmt.Sprintf("user_%s_analyze_%s_%s%s", userID, baseName, unixSeconds, ext)
-	tempPath := filepath.Join("./storage", tempFilename)
-	out, err := os.Create(tempPath)
-	if err != nil {
-		http.Error(w, "Storage error", http.StatusInternalServerError)
-		return
-	}
-	io.Copy(out, file)
-	out.Close()
-
-	exam := models.Exam{
-		UserID: userID,
-		Status: "analyzing_file",
-		OriginalFile: handler.Filename,
-	}
-	DB.Create(&exam)
-
-	apiKey := os.Getenv("OPENAI_API_KEY")
-
-	openAIFileID, err := uploadPDFToOpenAI(apiKey, tempPath)
-	if err != nil {
-		os.Remove(tempPath)
-		http.Error(w, fmt.Sprintf("OpenAI execution environment asset upload failure: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	var wg sync.WaitGroup
-	resultChan := make(chan models.AnalyzeResult, iterations)
-
-	for i := 0; i < iterations; i++ {
-		wg.Add(1)
-		go func(index int) {
-			defer wg.Done()
-			response, modelUsed, promptTokens, completionTokens, err := sendPDFAnalysisRequest(apiKey, openAIFileID)
-			if err != nil {
-				response = fmt.Sprintf("Execution trace error: %v", err)
-				modelUsed = "gpt-5.1"
-			}
-			resultChan <- models.AnalyzeResult{
-				ExamID:           exam.ID,
-				SampleID:         index + 1,
-				ModelUsed:        modelUsed,
-				PromptTokens:     promptTokens,
-				CompletionTokens: completionTokens,
-				Response:         response,
-			}
-		}(i)
-	}
-
-	wg.Wait()
-	close(resultChan)
-
-	var analysisList []models.AnalyzeResult
-	for res := range resultChan {
-		DB.Create(&res)
-		analysisList = append(analysisList, res)
-	}
-
-	os.Remove(tempPath)
-
-	exam.Status = "analyzed"
-	DB.Save(&exam)
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":  "Analysis sequence executed successfully. Local file purged.",
-		"exam_id": exam.ID,
-		"results": analysisList,
-	})
-}
-
 func uploadPDFToOpenAI(apiKey, filePath string) (string, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
